@@ -1,0 +1,1 @@
+g++ -Wall -Wextra *.cpp -lraylib
