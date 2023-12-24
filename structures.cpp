@@ -55,6 +55,15 @@ Vec3f Vec3f::normalize() const
     return Vec3f(x * invLen, y * invLen, z * invLen);
 }
 
+Vec3f Vec3f::cross(const Vec3f& right) const
+{
+    return Vec3f(
+        y * right.z - z * right.y,
+        z * right.x - x * right.z,
+        x * right.y - y * right.x
+    );
+}
+
 // ************************************************************
 
 // ************************** Matrix44f ***************************

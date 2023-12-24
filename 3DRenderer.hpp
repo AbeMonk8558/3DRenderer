@@ -23,6 +23,7 @@ public:
     float lengthSq() const;
     float dot(const Vec3f& right) const;
     Vec3f normalize() const;
+    Vec3f cross(const Vec3f& right) const;
 };
 
 class Matrix44f
