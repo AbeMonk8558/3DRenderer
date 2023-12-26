@@ -1,9 +1,68 @@
 #include <cmath>
 #include <initializer_list>
 #include <stdexcept>
+#include <raylib.h>
 #include "3DRenderer.hpp"
 
-#include "devUtil.hpp"
+// ************************** Vec2f ***************************
+
+Vec2f::Vec2f() : x(0), y(0) {}
+
+Vec2f::Vec2f(float _x, float _y) : x(_x), y(_y) {}
+
+Vec2f::Vec2f(const Vec2f& other) : x(other.x), y(other.y) {}
+
+Vec2f::Vec2f(const Vector2& raylibVec) : x(raylibVec.x), y(raylibVec.y) {}
+
+Vec2f Vec2f::operator + (const Vec2f& right) const
+{
+    return Vec2f(x + right.x, y + right.y);
+}
+
+Vec2f Vec2f::operator - (const Vec2f& right) const
+{
+    return Vec2f(x - right.x, y - right.y);
+}
+
+Vec2f Vec2f::operator * (const float& scalar) const
+{
+    return Vec2f(x * scalar, y * scalar);
+}
+
+Vec2f Vec2f::operator / (const float& scalar) const
+{
+    return Vec2f(x / scalar, y / scalar);
+}
+
+float Vec2f::length() const
+{
+    return sqrtf(x * x + y * y);
+}
+
+float Vec2f::lengthSq() const
+{
+    return x * x + y * y;
+}
+
+float Vec2f::dot(const Vec2f& right) const
+{
+    return x * right.x + y * right.y;
+}
+
+Vec2f Vec2f::normalize() const
+{
+    float invLen = 1 / length();
+
+    return Vec2f(x * invLen, y * invLen);
+}
+
+float Vec2f::cross(const Vec2f& right) const
+{
+    // Effectively the same as taking the determinant of a 2x2 matrix
+    return x * right.y - y * right.x;
+}
+
+// ************************************************************
 
 // ************************** Vec3f ***************************
 
@@ -224,3 +283,62 @@ Matrix44f Matrix44f::inverse() const
 
     return inv;
 }
+
+// ************************************************************
+
+// ************************** Triangle2D ***************************
+
+Triangle2D::Triangle2D() {}
+
+Triangle2D::Triangle2D(const Vec2f& v1, const Vec2f& v2, const Vec2f& v3) 
+{
+    v[0] = v1;
+    v[1] = v2;
+    v[2] = v3;
+}
+
+float Triangle2D::areaDoubled() const
+{
+    // NOTE: THE TRIANGLE'S POINTS MUST BE SPECIFIED IN COUNTER-CLOCKWISE ORDER!
+
+    return (v[1] - v[0]).cross(v[2] - v[1]);
+}
+
+AABB2D Triangle2D::boundingBox() const
+{
+    return AABB2D(
+        Vec2f(std::min(std::min(v[0].x, v[1].x), v[2].x), std::min(std::min(v[0].y, v[1].y), v[2].y)),
+        Vec2f(std::max(std::max(v[0].x, v[1].x), v[2].x), std::max(std::max(v[0].y, v[1].y), v[2].y))
+    );
+}
+
+bool Triangle2D::contains(const Vec2f& p) const
+{
+    // NOTE: THE TRIANGLE'S POINTS MUST BE SPECIFIED IN COUNTER-CLOCKWISE ORDER!
+    // Uses the concept of determinant signs indicating rotational relationship (Pineda edge function)
+
+    for (int i = 0; i < 3; i++)
+    {
+        Vec2f edge = v[(i + 1) % 3] - v[i];
+        Vec2f diff = p - v[i];
+
+        if (edge.cross(diff) < 0) return false;
+    }
+
+    return true;
+}
+
+// *****************************************************************
+
+// ************************** AABB2D ***************************
+
+AABB2D::AABB2D() : min(Vec2f()), max(Vec2f()) {}
+
+AABB2D::AABB2D(const Vec2f& _min, const Vec2f& _max) : min(_min), max(_max) {}
+
+bool AABB2D::contains(const Vec2f& p) const
+{   
+    return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y;
+}
+
+// ************************************************************

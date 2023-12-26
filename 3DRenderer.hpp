@@ -1,9 +1,35 @@
 #pragma once
 
 #include <initializer_list>
+#include <raylib.h>
 
+class Vec2f;
 class Vec3f;
 class Matrix44f;
+class Triangle2D;
+class AABB2D;
+
+class Vec2f
+{
+public:
+    float x, y;
+
+    Vec2f();
+    Vec2f(float _x, float _y);
+    Vec2f(const Vec2f& other);
+    Vec2f(const Vector2& raylibVec);
+
+    Vec2f operator + (const Vec2f& right) const;
+    Vec2f operator - (const Vec2f& right) const;
+    Vec2f operator * (const float& scalar) const;
+    Vec2f operator / (const float& scalar) const;
+
+    float length() const;
+    float lengthSq() const;
+    float dot(const Vec2f& right) const;
+    Vec2f normalize() const;
+    float cross(const Vec2f& right) const;
+};
 
 class Vec3f
 {
@@ -45,3 +71,28 @@ public:
 private:
     float _data[4][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};
 };
+
+class Triangle2D
+{
+public:
+    Vec2f v[3] = {Vec2f(), Vec2f(), Vec2f()}; // Must be in counter-clockwise order
+
+    Triangle2D();
+    Triangle2D(const Vec2f& v1, const Vec2f& v2, const Vec2f& v3);
+
+    float areaDoubled() const;
+    AABB2D boundingBox() const;
+    bool contains(const Vec2f& p) const;
+};
+
+class AABB2D // Axis-aligned bounding box
+{
+public:
+    Vec2f min, max;
+
+    AABB2D();
+    AABB2D(const Vec2f& _min, const Vec2f& _max);
+
+    bool contains(const Vec2f& p) const;
+};
+
