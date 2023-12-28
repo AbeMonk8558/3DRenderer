@@ -129,6 +129,8 @@ Vec3f Vec3f::cross(const Vec3f& right) const
 
 Matrix44f::Matrix44f() {}
 
+// Input values in a scalar-first fashion (e.g. do all x-values, then all y's, etc), 
+// rather than vector/axis first.
 Matrix44f::Matrix44f(std::initializer_list<float> values)
 {
     if (values.size() != 16)
@@ -209,10 +211,9 @@ Matrix44f Matrix44f::transpose() const
     return transpose;
 }
 
+// Uses Gauss-Jordan elimination and row elementary operations to calculate the inverse matrix.
 Matrix44f Matrix44f::inverse() const
 {
-    // Uses Gauss-Jordan elimination
-
     Matrix44f inv = identity();
     Matrix44f m = *this;
 
@@ -312,10 +313,10 @@ AABB2D Triangle2D::boundingBox() const
     );
 }
 
+// Uses the concept of determinant signs indicating rotational relationship (Pineda edge function).
 bool Triangle2D::contains(const Vec2f& p) const
 {
     // NOTE: THE TRIANGLE'S POINTS MUST BE SPECIFIED IN COUNTER-CLOCKWISE ORDER!
-    // Uses the concept of determinant signs indicating rotational relationship (Pineda edge function)
 
     for (int i = 0; i < 3; i++)
     {
