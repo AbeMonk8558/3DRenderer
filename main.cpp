@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <cmath>
 #include <array>
 #include <raylib.h>
@@ -24,9 +25,24 @@ Vector2 toRaylibRaster(const Vec2f& p)
     return (Vector2){p.x, screenSize - p.y - 1};
 }
 
+// Derived from setting the equation of a line in slope-intercept form when given a point and a slope to zero.
+bool pointOnLine(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
+{
+    // Uses epsilon to avoid floating-point imprecision errors.
+    return std::abs((p.y - v1.y) * (v2.x - v1.x) - (p.x - v1.x) * (v2.y - v1.y)) < 2;
+}
+
 int main(int argc, char** argv)
 {
     printf("Entry\n");
+
+    // Vec2f v0(1009.435345, 5674567.2142134);
+    // Vec2f v1(506.12341, 4567567.2345);
+    // Vec2f p = v0 + (v1 - v0) * 0.3452345;
+
+    // std::cout << '(' << p.x << ", " << p.y << ')' << std::endl;
+    // std::cout << pointOnLine(v0, v1, p) << std::endl;
+    // return 0;
 
     // DO NOT MODIFY IN CODE
     float cameraX = 0;
@@ -50,6 +66,8 @@ int main(int argc, char** argv)
     zBuffer.reserve(screenSize);
     std::vector<Vec2f> proj;
     proj.reserve(polyIdxs.size() * 3);
+
+    //std::ofstream logger("C:\\Users\\alexa\\Downloads\\3DRenderer.txt");
 
     while (!WindowShouldClose())
     {
@@ -155,18 +173,24 @@ int main(int argc, char** argv)
                         float b1 = a1 / a, b2 = a2 / a, b3 = a3 / a;
                         float z = b1 * verts[polyIdxs[i][0]].z + b2 * verts[polyIdxs[i][1]].z + b3 * verts[polyIdxs[i][2]].z;
 
-                        DrawPixelV(toRaylibRaster(p), GRAY);
+                        if (pointOnLine(t.v[0], t.v[1], p) || pointOnLine(t.v[1], t.v[2], p) || pointOnLine(t.v[2], t.v[0], p))
+                            DrawPixelV(toRaylibRaster(p), RED);
+                        else
+                            DrawPixelV(toRaylibRaster(p), GRAY);
+
+                        // logger << (p.x - t.v[0].x) / (t.v[1].x - t.v[0].x) << ", " << (p.y - t.v[0].y) / (t.v[1].y - t.v[0].y) << '\n';
                     }
                 }   
             }
 
-            DrawLineV(toRaylibRaster(proj[polyIdxs[i][0]]), toRaylibRaster(proj[polyIdxs[i][1]]), RED);
-            DrawLineV(toRaylibRaster(proj[polyIdxs[i][1]]), toRaylibRaster(proj[polyIdxs[i][2]]), RED);
-            DrawLineV(toRaylibRaster(proj[polyIdxs[i][2]]), toRaylibRaster(proj[polyIdxs[i][0]]), RED);
+            // DrawLineV(toRaylibRaster(proj[polyIdxs[i][0]]), toRaylibRaster(proj[polyIdxs[i][1]]), RED);
+            // DrawLineV(toRaylibRaster(proj[polyIdxs[i][1]]), toRaylibRaster(proj[polyIdxs[i][2]]), RED);
+            // DrawLineV(toRaylibRaster(proj[polyIdxs[i][2]]), toRaylibRaster(proj[polyIdxs[i][0]]), RED);
         }
 
         EndDrawing();
     }
 
+    // logger.close();
     return 0;
 }
