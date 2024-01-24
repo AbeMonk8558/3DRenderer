@@ -92,8 +92,8 @@ int main(int argc, char** argv)
             }
             else
             {
-                cameraX += drag.x * 10;
-                cameraY -= drag.y * 10;
+                cameraX += drag.x * 50;
+                cameraY -= drag.y * 50;
             }
         }
         if (IsKeyDown(KEY_W)) FOV += 1;
