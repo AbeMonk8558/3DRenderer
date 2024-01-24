@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <array>
 #include "3DRenderer.hpp"
 
 void printMatrix44f(const Matrix44f& m)
@@ -24,7 +25,7 @@ void printVec3f(const Vec3f& v)
 constexpr int numVerts = 8;
 constexpr int numPoly = 12;
 
-void retrievePrototypeMeshData(std::vector<Vec3f>& verts, std::vector<std::vector<int>>& polyIdxs, float scale)
+void retrievePrototypeMeshData(std::vector<Vec3f>& verts, std::vector<std::array<int, 3>>& polyIdxs, float scale)
 {   
     verts.reserve(numVerts);
     polyIdxs.reserve(numPoly);

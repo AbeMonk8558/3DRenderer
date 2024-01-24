@@ -1,7 +1,7 @@
-#include <iostream>
 #include <fstream>
 #include <cmath>
 #include <array>
+#include <algorithm>
 #include <raylib.h>
 #include "3DRenderer.hpp"
 
@@ -10,6 +10,7 @@
 constexpr static float cubeSize = 850;
 constexpr static int screenSize = 900;
 constexpr static float nearZ = (float)screenSize / 2;
+std::ofstream logger("C:\\Users\\alexa\\Downloads\\3DRenderer.txt");
 
 // Using determinants, we can calculate whether a point is the the right of left of an edge
 // (positive means right and vice versa). The 2D cross product is effectively the determinant
@@ -19,29 +20,33 @@ float pinedaEdge(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
     return (v2 - v1).cross(p - v1);
 }
 
-// Invert y-coordinate during conversion from screen to raster space.
-Vector2 toRaylibRaster(const Vec2f& p)
-{
-    return (Vector2){p.x, screenSize - p.y - 1};
-}
-
-// Derived from setting the equation of a line in slope-intercept form when given a point and a slope to zero.
 bool pointOnLine(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
 {
-    // Uses epsilon to avoid floating-point imprecision errors.
-    return std::abs((p.y - v1.y) * (v2.x - v1.x) - (p.x - v1.x) * (v2.y - v1.y)) < 2;
+    const Vec2f nv = (v2 - v1).normalize();
+    float distSq = (p - (v1 + nv * nv.dot(p - v1))).lengthSq();
+    return distSq < 1;
+
+    // Derived from setting the equation of a line in slope-intercept form when given a point and a slope to zero.
+    //return std::abs((p.y - v1.y) * (v2.x - v1.x) - (p.x - v1.x) * (v2.y - v1.y)) < 2;
+}
+
+bool AABB2DContains(float minx, float miny, float maxx, float maxy, const Vec2f& p)
+{
+    return p.x >= minx && p.x <= maxx && p.y >= miny && p.y <= maxy;
 }
 
 int main(int argc, char** argv)
 {
     printf("Entry\n");
 
-    // Vec2f v0(1009.435345, 5674567.2142134);
-    // Vec2f v1(506.12341, 4567567.2345);
-    // Vec2f p = v0 + (v1 - v0) * 0.3452345;
+    // Vec2f v1(0, 0);
+    // Vec2f v2(2, 1);
+    // Vec2f p(0.1, 0.1);
 
-    // std::cout << '(' << p.x << ", " << p.y << ')' << std::endl;
-    // std::cout << pointOnLine(v0, v1, p) << std::endl;
+    // const Vec2f nv = (v2 - v1).normalize();
+    // float distSq = (p - (v1 + nv * nv.dot(p))).lengthSq();
+
+    // std::cout << sqrtf(distSq) << std::endl;
     // return 0;
 
     // DO NOT MODIFY IN CODE
@@ -52,22 +57,24 @@ int main(int argc, char** argv)
     float FOV = 90;
     bool rasterize = false;
 
+    char FPS[16];
+
     SetTraceLogLevel(LOG_FATAL);
     SetTargetFPS(60);
     InitWindow(screenSize, screenSize, "Based 3D Render");
 
     std::vector<Vec3f> verts;
-    std::vector<std::vector<int>> polyIdxs;
+    std::vector<std::array<int, 3>> polyIdxs;
     retrievePrototypeMeshData(verts, polyIdxs, cubeSize);
     for (Vec3f& v : verts)
         v.z -= nearZ + cubeSize / 2; // Makes them more easily visible
 
-    std::vector<std::array<float, screenSize>> zBuffer;
-    zBuffer.reserve(screenSize);
-    std::vector<Vec2f> proj;
-    proj.reserve(polyIdxs.size() * 3);
+    // IMPORTANT: Overflows stack if not heap allocated
+    float* zBuffer = new float[screenSize * screenSize];
+    Color* frameBuffer = new Color[screenSize * screenSize];
 
-    //std::ofstream logger("C:\\Users\\alexa\\Downloads\\3DRenderer.txt");
+    Vec2f* proj = new Vec2f[verts.size()];
+    float* invZ = new float[verts.size()];
 
     while (!WindowShouldClose())
     {
@@ -109,15 +116,16 @@ int main(int argc, char** argv)
         };
         Matrix44f worldToCamera = (zAxisRotation * cameraToWorld).inverse();
 
+        float canvasSize = 2 * tanf(FOV * DEG2RAD / 2) * nearZ;
+
         for (int i = 0; i < verts.size(); i++) 
         {
-            float canvasSize = 2 * tanf(FOV * DEG2RAD / 2) * nearZ;
-
             Vec3f v = worldToCamera * verts[i];
+            invZ[i] = 1 / -v.z;
 
             Vec2f screen;
-            screen.x = v.x * nearZ / -v.z;
-            screen.y = v.y * nearZ / -v.z;
+            screen.x = v.x * nearZ * invZ[i];
+            screen.y = v.y * nearZ * invZ[i];
 
             Vec2f NDC;
             // [-1, 1]
@@ -128,27 +136,35 @@ int main(int argc, char** argv)
             proj[i].y = (1 + NDC.y) / 2 * (float)screenSize;
         }
 
-        BeginDrawing();
-
-        ClearBackground(BLACK);
-
-        char FPS[16];
-        snprintf(FPS, 16, "FPS: %d", GetFPS());
-        DrawText(FPS, screenSize - 100, 10, 15, BLUE);
-
         // All z-buffer coordinates are initially set to infinity so that the first z-value encountered
         // is garuanteed to be less than the current value.
-        for (int i = 0; i < screenSize; i++)
-            for (int j = 0; j < screenSize; j++)
-                zBuffer[i][j] = INFINITY;
+        for (int y = 0; y < screenSize; y++)
+        {
+            for (int x = 0; x < screenSize; x++)
+            {
+                zBuffer[(y * screenSize) + x] = INFINITY;
+                frameBuffer[(y * screenSize) + x] = BLACK;
+            }
+        }
 
         for (int i = 0; i < polyIdxs.size(); i++)
         {
             if (rasterize)
             {
-                Triangle2D t(proj[polyIdxs[i][0]], proj[polyIdxs[i][1]], proj[polyIdxs[i][2]]);
-                AABB2D bbox = t.boundingBox();
-                float a = t.areaDoubled();
+                const Vec2f& v1 = proj[polyIdxs[i][0]];
+                const Vec2f& v2 = proj[polyIdxs[i][1]];
+                const Vec2f& v3 = proj[polyIdxs[i][2]];
+
+                float invZ1 = invZ[polyIdxs[i][0]];
+                float invZ2 = invZ[polyIdxs[i][1]];
+                float invZ3 = invZ[polyIdxs[i][2]];
+
+                float minx = std::min(std::min(v1.x, v2.x), v3.x);
+                float miny = std::min(std::min(v1.y, v2.y), v3.y);
+                float maxx = std::max(std::max(v1.x, v2.x), v3.x);
+                float maxy = std::max(std::max(v1.y, v2.y), v3.y);
+
+                float a = pinedaEdge(v1, v2, v3);
 
                 // Triangles, when projected onto the screen, or because of a 3D rotation, could be defined
                 // in clockwise order relative to the camera. This means all calculations which should be
@@ -157,30 +173,41 @@ int main(int argc, char** argv)
                 float windingSign = a < 0 ? -1 : 1;
                 a *= windingSign;
 
-                for (int y = bbox.min.y; y <= bbox.max.y; y++)
+                for (int y = miny; y <= maxy; y++)
                 {
-                    for (int x = bbox.min.x; x <= bbox.max.x; x++)
+                    for (int x = minx; x <= maxx; x++)
                     {   
                         Vec2f p(x, y);
+                        if (!AABB2DContains(0, 0, screenSize - 1, screenSize - 1, p)) continue;
 
-                        float a1 = pinedaEdge(t.v[0], t.v[1], p) * windingSign;
-                        float a2 = pinedaEdge(t.v[1], t.v[2], p) * windingSign;
-                        float a3 = pinedaEdge(t.v[2], t.v[0], p) * windingSign;
+                        float a1 = pinedaEdge(v1, v2, p) * windingSign;
+                        float a2 = pinedaEdge(v2, v3, p) * windingSign;
+                        float a3 = pinedaEdge(v3, v1, p) * windingSign;
 
                         if (a1 < 0 || a2 < 0 || a3 < 0) continue;
 
                         // Barycentric coordinates allow z-values of pixels inside a triangle to be interpolated.
-                        float b1 = a1 / a, b2 = a2 / a, b3 = a3 / a;
-                        float z = b1 * verts[polyIdxs[i][0]].z + b2 * verts[polyIdxs[i][1]].z + b3 * verts[polyIdxs[i][2]].z;
+                        a1 /= a;
+                        a2 /= a;
+                        a3 /= a;
 
-                        if (pointOnLine(t.v[0], t.v[1], p) || pointOnLine(t.v[1], t.v[2], p) || pointOnLine(t.v[2], t.v[0], p))
-                            DrawPixelV(toRaylibRaster(p), RED);
-                        else
-                            DrawPixelV(toRaylibRaster(p), GRAY);
+                        // Perspective-correct interpolation requires that we interpolate the reciprocal z-coordinates (since
+                        // perspective projection preserves lines, but not distances).
+                        float z = 1 / (a1 * invZ1 + a2 * invZ2 + a3 * invZ3);
+
+                        if (z < zBuffer[(y * screenSize) + x])
+                        {
+                            zBuffer[(y * screenSize) + x] = z;
+
+                            if (pointOnLine(v1, v2, p) || pointOnLine(v2, v3, p) || pointOnLine(v3, v1, p))
+                                frameBuffer[(y * screenSize) + x] = RED;
+                            else
+                                frameBuffer[(y * screenSize) + x] = GRAY;
+                        }
 
                         // logger << (p.x - t.v[0].x) / (t.v[1].x - t.v[0].x) << ", " << (p.y - t.v[0].y) / (t.v[1].y - t.v[0].y) << '\n';
                     }
-                }   
+                }
             }
 
             // DrawLineV(toRaylibRaster(proj[polyIdxs[i][0]]), toRaylibRaster(proj[polyIdxs[i][1]]), RED);
@@ -188,9 +215,26 @@ int main(int argc, char** argv)
             // DrawLineV(toRaylibRaster(proj[polyIdxs[i][2]]), toRaylibRaster(proj[polyIdxs[i][0]]), RED);
         }
 
+        BeginDrawing();
+        ClearBackground(BLACK);
+
+        for (int y = 0; y < screenSize; y++)
+        {
+            for (int x = 0; x < screenSize; x++)
+                DrawPixel(x, screenSize - y - 1, frameBuffer[(y * screenSize) + x]);
+        }
+
+        snprintf(FPS, 16, "FPS: %d", GetFPS());
+        DrawText(FPS, screenSize - 100, 10, 15, BLUE);
+
         EndDrawing();
     }
 
-    // logger.close();
+    delete[] zBuffer;
+    delete[] frameBuffer;
+    delete[] proj;
+    delete[] invZ;
+
+    logger.close();
     return 0;
 }

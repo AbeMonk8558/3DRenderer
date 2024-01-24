@@ -6,8 +6,8 @@
 class Vec2f;
 class Vec3f;
 class Matrix44f;
-class Triangle2D;
-class AABB2D;
+// class Triangle2D;
+// class AABB2D;
 
 class Vec2f
 {
@@ -72,27 +72,27 @@ private:
     float _data[4][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};
 };
 
-class Triangle2D
-{
-public:
-    Vec2f v[3] = {Vec2f(), Vec2f(), Vec2f()}; // Must be in counter-clockwise order
+// class Triangle2D
+// {
+// public:
+//     Vec2f v[3] = {Vec2f(), Vec2f(), Vec2f()}; // Must be in counter-clockwise order
 
-    Triangle2D();
-    Triangle2D(const Vec2f& v1, const Vec2f& v2, const Vec2f& v3);
+//     Triangle2D();
+//     Triangle2D(const Vec2f& v1, const Vec2f& v2, const Vec2f& v3);
 
-    float areaDoubled() const;
-    AABB2D boundingBox() const;
-    bool contains(const Vec2f& p) const;
-};
+//     float areaDoubled() const;
+//     AABB2D boundingBox() const;
+//     bool contains(const Vec2f& p) const;
+// };
 
-class AABB2D // Axis-aligned bounding box
-{
-public:
-    Vec2f min, max;
+// class AABB2D // Axis-aligned bounding box
+// {
+// public:
+//     Vec2f min, max;
 
-    AABB2D();
-    AABB2D(const Vec2f& _min, const Vec2f& _max);
+//     AABB2D();
+//     AABB2D(const Vec2f& _min, const Vec2f& _max);
 
-    bool contains(const Vec2f& p) const;
-};
+//     bool contains(const Vec2f& p) const;
+// };
 

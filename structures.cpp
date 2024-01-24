@@ -287,59 +287,59 @@ Matrix44f Matrix44f::inverse() const
 
 // ************************************************************
 
-// ************************** Triangle2D ***************************
+// // ************************** Triangle2D ***************************
 
-Triangle2D::Triangle2D() {}
+// Triangle2D::Triangle2D() {}
 
-Triangle2D::Triangle2D(const Vec2f& v1, const Vec2f& v2, const Vec2f& v3) 
-{
-    v[0] = v1;
-    v[1] = v2;
-    v[2] = v3;
-}
+// Triangle2D::Triangle2D(const Vec2f& v1, const Vec2f& v2, const Vec2f& v3) 
+// {
+//     v[0] = v1;
+//     v[1] = v2;
+//     v[2] = v3;
+// }
 
-float Triangle2D::areaDoubled() const
-{
-    // NOTE: THE TRIANGLE'S POINTS MUST BE SPECIFIED IN COUNTER-CLOCKWISE ORDER!
+// float Triangle2D::areaDoubled() const
+// {
+//     // NOTE: THE TRIANGLE'S POINTS MUST BE SPECIFIED IN COUNTER-CLOCKWISE ORDER!
 
-    return (v[1] - v[0]).cross(v[2] - v[1]);
-}
+//     return (v[1] - v[0]).cross(v[2] - v[1]);
+// }
 
-AABB2D Triangle2D::boundingBox() const
-{
-    return AABB2D(
-        Vec2f(std::min(std::min(v[0].x, v[1].x), v[2].x), std::min(std::min(v[0].y, v[1].y), v[2].y)),
-        Vec2f(std::max(std::max(v[0].x, v[1].x), v[2].x), std::max(std::max(v[0].y, v[1].y), v[2].y))
-    );
-}
+// AABB2D Triangle2D::boundingBox() const
+// {
+//     return AABB2D(
+//         Vec2f(std::min(std::min(v[0].x, v[1].x), v[2].x), std::min(std::min(v[0].y, v[1].y), v[2].y)),
+//         Vec2f(std::max(std::max(v[0].x, v[1].x), v[2].x), std::max(std::max(v[0].y, v[1].y), v[2].y))
+//     );
+// }
 
-// Uses the concept of determinant signs indicating rotational relationship (Pineda edge function).
-bool Triangle2D::contains(const Vec2f& p) const
-{
-    // NOTE: THE TRIANGLE'S POINTS MUST BE SPECIFIED IN COUNTER-CLOCKWISE ORDER!
+// // Uses the concept of determinant signs indicating rotational relationship (Pineda edge function).
+// bool Triangle2D::contains(const Vec2f& p) const
+// {
+//     // NOTE: THE TRIANGLE'S POINTS MUST BE SPECIFIED IN COUNTER-CLOCKWISE ORDER!
 
-    for (int i = 0; i < 3; i++)
-    {
-        Vec2f edge = v[(i + 1) % 3] - v[i];
-        Vec2f diff = p - v[i];
+//     for (int i = 0; i < 3; i++)
+//     {
+//         Vec2f edge = v[(i + 1) % 3] - v[i];
+//         Vec2f diff = p - v[i];
 
-        if (edge.cross(diff) < 0) return false;
-    }
+//         if (edge.cross(diff) < 0) return false;
+//     }
 
-    return true;
-}
+//     return true;
+// }
 
-// *****************************************************************
+// // *****************************************************************
 
-// ************************** AABB2D ***************************
+// // ************************** AABB2D ***************************
 
-AABB2D::AABB2D() : min(Vec2f()), max(Vec2f()) {}
+// AABB2D::AABB2D() : min(Vec2f()), max(Vec2f()) {}
 
-AABB2D::AABB2D(const Vec2f& _min, const Vec2f& _max) : min(_min), max(_max) {}
+// AABB2D::AABB2D(const Vec2f& _min, const Vec2f& _max) : min(_min), max(_max) {}
 
-bool AABB2D::contains(const Vec2f& p) const
-{   
-    return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y;
-}
+// bool AABB2D::contains(const Vec2f& p) const
+// {   
+//     return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y;
+// }
 
-// ************************************************************
+// // ************************************************************
