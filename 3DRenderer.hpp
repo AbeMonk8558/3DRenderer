@@ -1,6 +1,7 @@
 #pragma once
 
 #include <initializer_list>
+#include <immintrin.h>
 #include <raylib.h>
 
 class Vec2f;

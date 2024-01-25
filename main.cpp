@@ -7,6 +7,12 @@
 
 #include "devUtil.hpp"
 
+/***************************** TODO LIST ******************************
+1. Implement anti-aliasing (described in scratchapixel)
+2. Implement SIMD optimization for matrix-vector multiplication, and for rasterizer
+3. Make vertex-line stage more accurate.
+**********************************************************************/
+
 constexpr static float cubeSize = 850;
 constexpr static int screenSize = 900;
 constexpr static float nearZ = (float)screenSize / 2;
@@ -22,9 +28,11 @@ float pinedaEdge(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
 
 bool pointOnLine(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
 {
+    static const float epsilon = 1;
+
     const Vec2f nv = (v2 - v1).normalize();
     float distSq = (p - (v1 + nv * nv.dot(p - v1))).lengthSq();
-    return distSq < 1;
+    return distSq < epsilon;
 
     // Derived from setting the equation of a line in slope-intercept form when given a point and a slope to zero.
     //return std::abs((p.y - v1.y) * (v2.x - v1.x) - (p.x - v1.x) * (v2.y - v1.y)) < 2;
@@ -38,16 +46,6 @@ bool AABB2DContains(float minx, float miny, float maxx, float maxy, const Vec2f&
 int main(int argc, char** argv)
 {
     printf("Entry\n");
-
-    // Vec2f v1(0, 0);
-    // Vec2f v2(2, 1);
-    // Vec2f p(0.1, 0.1);
-
-    // const Vec2f nv = (v2 - v1).normalize();
-    // float distSq = (p - (v1 + nv * nv.dot(p))).lengthSq();
-
-    // std::cout << sqrtf(distSq) << std::endl;
-    // return 0;
 
     // DO NOT MODIFY IN CODE
     float cameraX = 0;
@@ -122,13 +120,14 @@ int main(int argc, char** argv)
         {
             Vec3f v = worldToCamera * verts[i];
             invZ[i] = 1 / -v.z;
-
+            
+            // Perform perspective divide, considering near clipping plane
             Vec2f screen;
             screen.x = v.x * nearZ * invZ[i];
             screen.y = v.y * nearZ * invZ[i];
 
+            // Normalized Device Coordinate in range [-1, 1]
             Vec2f NDC;
-            // [-1, 1]
             NDC.x = 2 * screen.x / canvasSize;
             NDC.y = 2 * screen.y / canvasSize;
 
@@ -159,10 +158,10 @@ int main(int argc, char** argv)
                 float invZ2 = invZ[polyIdxs[i][1]];
                 float invZ3 = invZ[polyIdxs[i][2]];
 
-                float minx = std::min(std::min(v1.x, v2.x), v3.x);
-                float miny = std::min(std::min(v1.y, v2.y), v3.y);
-                float maxx = std::max(std::max(v1.x, v2.x), v3.x);
-                float maxy = std::max(std::max(v1.y, v2.y), v3.y);
+                float minx = std::max(std::min(std::min(v1.x, v2.x), v3.x), 0.0f);
+                float miny = std::max(std::min(std::min(v1.y, v2.y), v3.y), 0.0f);
+                float maxx = std::min(std::max(std::max(v1.x, v2.x), v3.x), screenSize - 1.0f);
+                float maxy = std::min(std::max(std::max(v1.y, v2.y), v3.y), screenSize - 1.0f);
 
                 float a = pinedaEdge(v1, v2, v3);
 
@@ -178,11 +177,14 @@ int main(int argc, char** argv)
                     for (int x = minx; x <= maxx; x++)
                     {   
                         Vec2f p(x, y);
-                        if (!AABB2DContains(0, 0, screenSize - 1, screenSize - 1, p)) continue;
 
-                        float a1 = pinedaEdge(v1, v2, p) * windingSign;
-                        float a2 = pinedaEdge(v2, v3, p) * windingSign;
-                        float a3 = pinedaEdge(v3, v1, p) * windingSign;
+                        // Edge function determines whether point lies inside of the triangle using
+                        // the determinant (which can determine rotational relationships). Note that
+                        // the barycentric coordinate for each vertex is computed using the area between its
+                        // opposite edge and the point, hence the arrangment of the vertices in the below lines.
+                        float a1 = pinedaEdge(v2, v3, p) * windingSign;
+                        float a2 = pinedaEdge(v3, v1, p) * windingSign;
+                        float a3 = pinedaEdge(v1, v2, p) * windingSign;
 
                         if (a1 < 0 || a2 < 0 || a3 < 0) continue;
 
@@ -209,10 +211,6 @@ int main(int argc, char** argv)
                     }
                 }
             }
-
-            // DrawLineV(toRaylibRaster(proj[polyIdxs[i][0]]), toRaylibRaster(proj[polyIdxs[i][1]]), RED);
-            // DrawLineV(toRaylibRaster(proj[polyIdxs[i][1]]), toRaylibRaster(proj[polyIdxs[i][2]]), RED);
-            // DrawLineV(toRaylibRaster(proj[polyIdxs[i][2]]), toRaylibRaster(proj[polyIdxs[i][0]]), RED);
         }
 
         BeginDrawing();

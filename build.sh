@@ -1,1 +1,1 @@
-g++ -Wall -Wextra *.cpp -lraylib
+g++ -Wall -Wextra -mavx *.cpp -lraylib

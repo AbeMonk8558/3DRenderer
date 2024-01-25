@@ -1,6 +1,7 @@
 #include <cmath>
 #include <initializer_list>
 #include <stdexcept>
+#include <immintrin.h>
 #include <raylib.h>
 #include "3DRenderer.hpp"
 
@@ -169,6 +170,14 @@ float* Matrix44f::operator [] (const int& idx)
 
 Vec3f Matrix44f::operator * (const Vec3f& v) const
 {
+    __m128 vv = {v.x, v.y, v.z, 1};
+    __m128 mvx = {_data[0][0], _data[1][0], _data[2][0], _data[3][0]};
+    __m128 mvy = {_data[0][1], _data[1][1], _data[2][1], _data[3][1]};
+    __m128 mvz = {_data[0][2], _data[1][2], _data[2][2], _data[3][2]};
+    __m128 mvw = {_data[0][3], _data[1][3], _data[2][3], _data[3][3]};
+
+    //__m128 nx = _mm_fmadd_ps
+
     float nx = v.x * _data[0][0] + v.y * _data[0][1] + v.z * _data[0][2] + _data[0][3];
     float ny = v.x * _data[1][0] + v.y * _data[1][1] + v.z * _data[1][2] + _data[1][3];
     float nz = v.x * _data[2][0] + v.y * _data[2][1] + v.z * _data[2][2] + _data[2][3];
