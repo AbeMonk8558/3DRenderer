@@ -20,6 +20,12 @@ public:
 
     float_m256(const __m256& ps) : data(ps) {}
 
+    float_m256 operator - () const
+    {
+        __m256 xorMask = _mm256_set1_ps(-0.0f);
+        return _mm256_xor_ps(data, xorMask);
+    }
+
     float_m256 operator + (const float_m256& right) const
     {
         return float_m256(_mm256_add_ps(data, right.data));
@@ -38,6 +44,16 @@ public:
     float_m256 operator / (const float_m256& right) const
     {
         return float_m256(_mm256_div_ps(data, right.data));
+    }
+
+    float operator [] (int idx) const
+    {
+        return data[idx];
+    }
+
+    float& operator [] (int idx)
+    {
+        return data[idx];
     }
 
     void getPointer(float* ptr) const
@@ -65,6 +81,28 @@ float_m256 min_m256(const float_m256& left, const float_m256& right)
 Vec3f_m256 vec3fToVec3f_m256(const Vec3f* vecs)
 {
     Vec3f_m256 res;
+    res.x = {vecs[0].x, vecs[1].x, vecs[2].x, vecs[3].x, vecs[4].x, vecs[5].x, vecs[6].x, vecs[7].x};
+    res.y = {vecs[0].y, vecs[1].y, vecs[2].y, vecs[3].y, vecs[4].y, vecs[5].y, vecs[6].y, vecs[7].y};
+    res.z = {vecs[0].z, vecs[1].z, vecs[2].z, vecs[3].z, vecs[4].z, vecs[5].z, vecs[6].z, vecs[7].z};
+
+    return res;
+}
+
+Vec3f_m256 vec3fToVec3f_m256(const Vec3f* vecs, int num)
+{
+    Vec3f_m256 res;
+
+    // A value of 0 would lead to zero-division errors
+    res.x = _mm256_set1_ps(1.0f);
+    res.y = _mm256_set1_ps(1.0f);
+    res.z = _mm256_set1_ps(1.0f);
+
+    for (int i = 0; i < num; i++)
+    {
+        res.x[i] = vecs[i].x;
+        res.y[i] = vecs[i].y;
+        res.z[i] = vecs[i].z;
+    }
 
     return res;
 }

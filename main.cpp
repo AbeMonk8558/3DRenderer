@@ -11,6 +11,7 @@
 1. Implement anti-aliasing (described in scratchapixel)
 2. Implement SIMD optimization for matrix-vector multiplication, and for rasterizer
 3. Make vertex-line stage more accurate.
+4. Encase the entire main file in a class so variables can be shared amongst functions.
 **********************************************************************/
 
 constexpr static float cubeSize = 850;
@@ -38,9 +39,10 @@ bool pointOnLine(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
     //return std::abs((p.y - v1.y) * (v2.x - v1.x) - (p.x - v1.x) * (v2.y - v1.y)) < 2;
 }
 
-bool AABB2DContains(float minx, float miny, float maxx, float maxy, const Vec2f& p)
+template <typename TSerial, typename TPacked>
+TSerial getSerialValue(TPacked* arr, int idx)
 {
-    return p.x >= minx && p.x <= maxx && p.y >= miny && p.y <= maxy;
+    return arr[idx / 8][idx % 8];
 }
 
 int main(int argc, char** argv)
@@ -69,16 +71,17 @@ int main(int argc, char** argv)
 
     // IMPORTANT: Overflows stack if not heap allocated
     float* zBuffer = new float[screenSize * screenSize];
-    Color* frameBuffer = new Color[screenSize * screenSize];
-
-    Vec2f* proj = new Vec2f[verts.size()];
-    float* invZ = new float[verts.size()];
+    //Color* frameBuffer = new Color[screenSize * screenSize];
+    
+    int nVectorizedVerts = (int)ceilf(verts.size() / 8.0f);
+    Vec2f_m256* proj = new Vec2f_m256[nVectorizedVerts];
+    float_m256* invZ = new float_m256[nVectorizedVerts];
 
     while (!WindowShouldClose())
     {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
         {
-            Vector2 drag = GetGestureDragVector();
+            Vec2f drag = static_cast<Vec2f>(GetGestureDragVector());
 
             if (IsKeyDown(KEY_LEFT_CONTROL))
             {
@@ -98,41 +101,58 @@ int main(int argc, char** argv)
         if (IsKeyDown(KEY_S)) FOV -= 1;
         if (IsKeyPressed(KEY_R)) rasterize = !rasterize;
 
-        Matrix44f zAxisRotation
+        Matrix44f_m256 cameraToWorld 
         {
-            cosf(cameraRoll * DEG2RAD), -sinf(cameraRoll * DEG2RAD), 0, 0,
-            sinf(cameraRoll * DEG2RAD), cosf(cameraRoll * DEG2RAD), 0, 0,
-            0, 0, 1, 0,
-            0, 0, 0, 1
-        };
-        Matrix44f cameraToWorld 
-        {
-            1, 0, 0, cameraX,
-            0, 1, 0, cameraY,
+            cosf(cameraRoll * DEG2RAD), -sinf(cameraRoll * DEG2RAD), 0, cameraX,
+            sinf(cameraRoll * DEG2RAD), cosf(cameraRoll * DEG2RAD), 0, cameraY,
             0, 0, 1, cameraZ,
             0, 0, 0, 1
         };
-        Matrix44f worldToCamera = (zAxisRotation * cameraToWorld).inverse();
+        Matrix44f_m256 worldToCamera = cameraToWorld.inverse();
 
         float canvasSize = 2 * tanf(FOV * DEG2RAD / 2) * nearZ;
 
-        for (int i = 0; i < verts.size(); i++) 
+        for (int i = 0; i < verts.size(); i += 8) 
         {
-            Vec3f v = worldToCamera * verts[i];
-            invZ[i] = 1 / -v.z;
+            Vec3f_m256 v = worldToCamera * vec3fToVec3f_m256(&verts[i]);
+
+            invZ[i] = float_m256(1) / -v.z;
             
             // Perform perspective divide, considering near clipping plane
-            Vec2f screen;
+            Vec2f_m256 screen;
             screen.x = v.x * nearZ * invZ[i];
             screen.y = v.y * nearZ * invZ[i];
 
             // Normalized Device Coordinate in range [-1, 1]
-            Vec2f NDC;
-            NDC.x = 2 * screen.x / canvasSize;
-            NDC.y = 2 * screen.y / canvasSize;
+            Vec2f_m256 NDC;
+            NDC.x = float_m256(2) * screen.x / canvasSize;
+            NDC.y = float_m256(2) * screen.y / canvasSize;
 
-            proj[i].x = (1 + NDC.x) / 2 * (float)screenSize;
-            proj[i].y = (1 + NDC.y) / 2 * (float)screenSize;
+            proj[i].x = (float_m256(1) + NDC.x) / float_m256(2) * (float)screenSize;
+            proj[i].y = (float_m256(1) + NDC.y) / float_m256(2) * (float)screenSize;
+        }
+
+        int remaining = verts.size() % 8;
+        if (remaining > 0)
+        {
+            int i = nVectorizedVerts - 1;
+
+            Vec3f_m256 v = worldToCamera * vec3fToVec3f_m256(&verts[verts.size() - remaining], remaining);
+
+            invZ[i] = float_m256(1) / -v.z;
+            
+            // Perform perspective divide, considering near clipping plane
+            Vec2f_m256 screen;
+            screen.x = v.x * nearZ * invZ[i];
+            screen.y = v.y * nearZ * invZ[i];
+
+            // Normalized Device Coordinate in range [-1, 1]
+            Vec2f_m256 NDC;
+            NDC.x = float_m256(2) * screen.x / canvasSize;
+            NDC.y = float_m256(2) * screen.y / canvasSize;
+
+            proj[i].x = (float_m256(1) + NDC.x) / float_m256(2) * (float)screenSize;
+            proj[i].y = (float_m256(1) + NDC.y) / float_m256(2) * (float)screenSize;
         }
 
         // All z-buffer coordinates are initially set to infinity so that the first z-value encountered
@@ -142,21 +162,24 @@ int main(int argc, char** argv)
             for (int x = 0; x < screenSize; x++)
             {
                 zBuffer[(y * screenSize) + x] = INFINITY;
-                frameBuffer[(y * screenSize) + x] = BLACK;
+                //frameBuffer[(y * screenSize) + x] = BLACK;
             }
         }
+        
+        BeginDrawing();
+        ClearBackground(BLACK);
 
         for (int i = 0; i < polyIdxs.size(); i++)
         {
             if (rasterize)
             {
-                const Vec2f& v1 = proj[polyIdxs[i][0]];
-                const Vec2f& v2 = proj[polyIdxs[i][1]];
-                const Vec2f& v3 = proj[polyIdxs[i][2]];
+                const Vec2f& v1 = getSerialValue<Vec2f>(proj, polyIdxs[i][0]);
+                const Vec2f& v2 = getSerialValue<Vec2f>(proj, polyIdxs[i][1]);
+                const Vec2f& v3 = getSerialValue<Vec2f>(proj, polyIdxs[i][2]);
 
-                float invZ1 = invZ[polyIdxs[i][0]];
-                float invZ2 = invZ[polyIdxs[i][1]];
-                float invZ3 = invZ[polyIdxs[i][2]];
+                float invZ1 = getSerialValue<float>(invZ, polyIdxs[i][0]);
+                float invZ2 = getSerialValue<float>(invZ, polyIdxs[i][1]);
+                float invZ3 = getSerialValue<float>(invZ, polyIdxs[i][2]);
 
                 float minx = std::max(std::min(std::min(v1.x, v2.x), v3.x), 0.0f);
                 float miny = std::max(std::min(std::min(v1.y, v2.y), v3.y), 0.0f);
@@ -202,9 +225,11 @@ int main(int argc, char** argv)
                             zBuffer[(y * screenSize) + x] = z;
 
                             if (pointOnLine(v1, v2, p) || pointOnLine(v2, v3, p) || pointOnLine(v3, v1, p))
-                                frameBuffer[(y * screenSize) + x] = RED;
+                                DrawPixel(x, screenSize - y - 1, RED);
+                                //frameBuffer[(y * screenSize) + x] = RED;
                             else
-                                frameBuffer[(y * screenSize) + x] = GRAY;
+                                DrawPixel(x, screenSize - y - 1, GRAY);
+                                //frameBuffer[(y * screenSize) + x] = GRAY;
                         }
 
                         // logger << (p.x - t.v[0].x) / (t.v[1].x - t.v[0].x) << ", " << (p.y - t.v[0].y) / (t.v[1].y - t.v[0].y) << '\n';
@@ -213,14 +238,11 @@ int main(int argc, char** argv)
             }
         }
 
-        BeginDrawing();
-        ClearBackground(BLACK);
-
-        for (int y = 0; y < screenSize; y++)
-        {
-            for (int x = 0; x < screenSize; x++)
-                DrawPixel(x, screenSize - y - 1, frameBuffer[(y * screenSize) + x]);
-        }
+        // for (int y = 0; y < screenSize; y++)
+        // {
+        //     for (int x = 0; x < screenSize; x++)
+        //         DrawPixel(x, screenSize - y - 1, frameBuffer[(y * screenSize) + x]);
+        // }
 
         snprintf(FPS, 16, "FPS: %d", GetFPS());
         DrawText(FPS, screenSize - 100, 10, 15, BLUE);
@@ -229,7 +251,7 @@ int main(int argc, char** argv)
     }
 
     delete[] zBuffer;
-    delete[] frameBuffer;
+    //delete[] frameBuffer;
     delete[] proj;
     delete[] invZ;
 
