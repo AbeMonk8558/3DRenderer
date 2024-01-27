@@ -76,6 +76,26 @@ namespace simd
             data = _mm256_div_ps(data, right.data);
         }
 
+        __m256 operator < (const float_m256& right)
+        {
+            return _mm256_cmp_ps(data, right.data, _CMP_LT_OQ);
+        }
+
+        __m256 operator <= (const float_m256& right)
+        {
+            return _mm256_cmp_ps(data, right.data, _CMP_LE_OQ);
+        }
+
+        __m256 operator > (const float_m256& right)
+        {
+            return _mm256_cmp_ps(data, right.data, _CMP_GT_OQ);
+        }
+
+        __m256 operator >= (const float_m256& right)
+        {
+            return _mm256_cmp_ps(data, right.data, _CMP_GE_OQ);
+        }
+
         float operator [] (int idx) const
         {
             return data[idx];
@@ -94,6 +114,7 @@ namespace simd
         friend float_m256 max_m256(const float_m256& left, const float_m256& right);
         friend float_m256 min_m256(const float_m256& left, const float_m256& right);
         friend float_m256 abs_m256(const float_m256& f);
+        friend float_m256 sqrt_m256(const float_m256& f);
 
     private:
         __m256 data;
@@ -119,17 +140,22 @@ namespace simd
         return _mm256_and_ps(f.data, andMask);
     }
 
-    template <typename T>
-    T absf(const T& val)
+    float_m256 sqrt_m256(const float_m256& f)
     {
-        return fabsf(val);
+        return float_m256(_mm256_sqrt_ps(f.data));
     }
 
-    template <>
-    float_m256 absf<float_m256>(const float_m256& fv)
-    {
-        return abs_m256(fv);
-    }
+    // template <typename T>
+    // T absf(const T& val)
+    // {
+    //     return fabsf(val);
+    // }
+
+    // template <>
+    // float_m256 absf<float_m256>(const float_m256& fv)
+    // {
+    //     return abs_m256(fv);
+    // }
 
     Vec3f_m256 vec3fToVec3f_m256(const Vec3f* vecs)
     {
@@ -159,6 +185,17 @@ namespace simd
 
         return res;
     }
+
+    Vec2f_m256 vec3fToUniformVec3f_m256(const Vec3f& vec)
+    {
+        
+    }
+}
+
+template <>
+simd::float_m256 simd::Vec2f_m256::length() const
+{
+    return sqrt_m256(x * x + y * y);
 }
 
 template <>

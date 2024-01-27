@@ -1,6 +1,7 @@
 #include <fstream>
 #include <cmath>
 #include <raylib.h>
+#include <immintrin.h>
 #include "3DRenderer.hpp"
 #include "linearMath.hpp"
 #include "SIMD.hpp"
@@ -24,17 +25,18 @@ std::ofstream logger("C:\\Users\\alexa\\Downloads\\3DRenderer.txt");
 // Using determinants, we can calculate whether a point is the the right of left of an edge
 // (positive means right and vice versa). The 2D cross product is effectively the determinant
 // of a 2x2 matrix.
-float pinedaEdge(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
+template <typename TVec>
+TVec pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p)
 {
     return (v2 - v1).cross(p - v1);
 }
 
-bool pointOnLine(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
+__m256 pointOnLine(const simd::Vec2f_m256& v1, const simd::Vec2f_m256& v2, const simd::Vec2f_m256& p)
 {
-    static const float epsilon = 1;
+    static const simd::float_m256 epsilon(1);
 
-    const Vec2f nv = (v2 - v1).normalize();
-    float distSq = (p - (v1 + nv * nv.dot(p - v1))).lengthSq();
+    simd::Vec2f_m256 nv = (v2 - v1).normalize();
+    simd::float_m256 distSq = (p - (v1 + nv * nv.dot(p - v1))).lengthSq();
     return distSq < epsilon;
 
     // Derived from setting the equation of a line in slope-intercept form when given a point and a slope to zero.
@@ -178,7 +180,6 @@ int main(int argc, char** argv)
             for (int x = 0; x < screenSize; x++)
             {
                 zBuffer[(y * screenSize) + x] = INFINITY;
-                //frameBuffer[(y * screenSize) + x] = BLACK;
             }
         }
         
@@ -189,43 +190,59 @@ int main(int argc, char** argv)
         {
             if (rasterize)
             {
-                const Vec2f& v1 = getSerialVec2(proj, polyIdxs[i][0]);
-                const Vec2f& v2 = getSerialVec2(proj, polyIdxs[i][1]);
-                const Vec2f& v3 = getSerialVec2(proj, polyIdxs[i][2]);
+                Vec2f v1Serial = getSerialVec2(proj, polyIdxs[i][0]);
+                Vec2f v2Serial = getSerialVec2(proj, polyIdxs[i][1]);
+                Vec2f v3Serial = getSerialVec2(proj, polyIdxs[i][2]);
 
-                float invZ1 = invZ[polyIdxs[i][0]];
-                float invZ2 = invZ[polyIdxs[i][1]];
-                float invZ3 = invZ[polyIdxs[i][2]];
+                float minx = std::max(std::min(std::min(v1Serial.x, v2Serial.x), v3Serial.x), 0.0f);
+                float miny = std::max(std::min(std::min(v1Serial.y, v2Serial.y), v3Serial.y), 0.0f);
+                float maxx = std::min(std::max(std::max(v1Serial.x, v2Serial.x), v3Serial.x), screenSize - 1.0f);
+                float maxy = std::min(std::max(std::max(v1Serial.y, v2Serial.y), v3Serial.y), screenSize - 1.0f);
 
-                float minx = std::max(std::min(std::min(v1.x, v2.x), v3.x), 0.0f);
-                float miny = std::max(std::min(std::min(v1.y, v2.y), v3.y), 0.0f);
-                float maxx = std::min(std::max(std::max(v1.x, v2.x), v3.x), screenSize - 1.0f);
-                float maxy = std::min(std::max(std::max(v1.y, v2.y), v3.y), screenSize - 1.0f);
-
-                float a = pinedaEdge(v1, v2, v3);
+                float aSerial = pinedaEdge(v1Serial, v2Serial, v3Serial);
 
                 // Triangles, when projected onto the screen, or because of a 3D rotation, could be defined
                 // in clockwise order relative to the camera. This means all calculations which should be
                 // positive will be negative, and their signs must be reversed. We can tell by whether the
                 // triangle's area is negative that this is the case.
-                float windingSign = a < 0 ? -1 : 1;
-                a *= windingSign;
+                float windingSignSerial = aSerial < 0 ? -1 : 1;
+                aSerial *= windingSignSerial;
+
+                simd::Vec2f_m256 v1(simd::float_m256(v1Serial.x), simd::float_m256(v1Serial.y));
+                simd::Vec2f_m256 v2(simd::float_m256(v2Serial.x), simd::float_m256(v2Serial.y));
+                simd::Vec2f_m256 v3(simd::float_m256(v3Serial.x), simd::float_m256(v3Serial.y));
+
+                simd::float_m256 a(aSerial);
+                simd::float_m256 windingSign(windingSignSerial);
+
+                simd::float_m256 invZ1(invZ[polyIdxs[i][0]]);
+                simd::float_m256 invZ2(invZ[polyIdxs[i][1]]);
+                simd::float_m256 invZ3(invZ[polyIdxs[i][2]]);
+
+                int ctr = 0;
+                simd::Vec2f_m256 p;
 
                 for (int y = miny; y <= maxy; y++)
                 {
                     for (int x = minx; x <= maxx; x++)
                     {   
-                        Vec2f p(x, y);
+                        if (ctr < 8)
+                        {
+                            p.x[ctr] = x;
+                            p.y[ctr] = y;
+
+                            ctr++;
+                            continue;
+                        }
+                        ctr = 0;
 
                         // Edge function determines whether point lies inside of the triangle using
                         // the determinant (which can determine rotational relationships). Note that
                         // the barycentric coordinate for each vertex is computed using the area between its
                         // opposite edge and the point, hence the arrangment of the vertices in the below lines.
-                        float a1 = pinedaEdge(v2, v3, p) * windingSign;
-                        float a2 = pinedaEdge(v3, v1, p) * windingSign;
-                        float a3 = pinedaEdge(v1, v2, p) * windingSign;
-
-                        if (a1 < 0 || a2 < 0 || a3 < 0) continue;
+                        simd::float_m256 a1 = pinedaEdge(v2, v3, p) * windingSign;
+                        simd::float_m256 a2 = pinedaEdge(v3, v1, p) * windingSign;
+                        simd::float_m256 a3 = pinedaEdge(v1, v2, p) * windingSign;
 
                         // Barycentric coordinates allow z-values of pixels inside a triangle to be interpolated.
                         a1 /= a;
@@ -234,16 +251,25 @@ int main(int argc, char** argv)
 
                         // Perspective-correct interpolation requires that we interpolate the reciprocal z-coordinates (since
                         // perspective projection preserves lines, but not distances).
-                        float z = 1 / (a1 * invZ1 + a2 * invZ2 + a3 * invZ3);
+                        simd::float_m256 z = simd::float_m256(1) / (a1 * invZ1 + a2 * invZ2 + a3 * invZ3);
 
-                        if (z < zBuffer[(y * screenSize) + x])
+                        __m256 inTriangle = _mm256_and_ps(_mm256_and_ps(a1 >= 0, a2 >= 0), a3 >= 0);
+                        __m256 onEdge = _mm256_or_ps(_mm256_or_ps(pointOnLine(v1, v2, p), pointOnLine(v2, v3, p)), pointOnLine(v3, v1, p));
+
+                        for (int j = 0; j < 8; j++)
                         {
-                            zBuffer[(y * screenSize) + x] = z;
+                            int px = (int)p.x[j];
+                            int py = (int)p.y[j];
 
-                            if (pointOnLine(v1, v2, p) || pointOnLine(v2, v3, p) || pointOnLine(v3, v1, p))
-                                DrawPixel(x, screenSize - y - 1, RED);
-                            else
-                                DrawPixel(x, screenSize - y - 1, GRAY);
+                            if (inTriangle[j] && z[j] < zBuffer[(py * screenSize) + px])
+                            {
+                                zBuffer[(py * screenSize) + px] = z[j];
+
+                                if (onEdge[j] = 0xff)
+                                    DrawPixel(x, screenSize - y - 1, RED);
+                                else
+                                    DrawPixel(x, screenSize - y - 1, GRAY);
+                            }
                         }
 
                         // logger << (p.x - t.v[0].x) / (t.v[1].x - t.v[0].x) << ", " << (p.y - t.v[0].y) / (t.v[1].y - t.v[0].y) << '\n';
