@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <immintrin.h>
 #include <raylib.h>
-#include "SIMD.hpp"
+#include "3DRenderer.hpp"
 
 template <typename T>
 class Vec2
@@ -183,14 +183,6 @@ public:
 
     Vec3<T> operator * (const Vec3<T>& v) const
     {
-        // __m128 vv = {v.x, v.y, v.z, 1};
-        // __m128 mvx = {_data[0][0], _data[1][0], _data[2][0], _data[3][0]};
-        // __m128 mvy = {_data[0][1], _data[1][1], _data[2][1], _data[3][1]};
-        // __m128 mvz = {_data[0][2], _data[1][2], _data[2][2], _data[3][2]};
-        // __m128 mvw = {_data[0][3], _data[1][3], _data[2][3], _data[3][3]};
-
-        //__m128 nx = _mm_fmadd_ps
-
         T nx = v.x * _data[0][0] + v.y * _data[0][1] + v.z * _data[0][2] + _data[0][3];
         T ny = v.x * _data[1][0] + v.y * _data[1][1] + v.z * _data[1][2] + _data[1][3];
         T nz = v.x * _data[2][0] + v.y * _data[2][1] + v.z * _data[2][2] + _data[2][3];
@@ -248,7 +240,7 @@ public:
 
                 // Find row with maximum absolute value coefficient in same column
                 for (int r = 0; r < 4; r++)
-                    if (simd::absf<T>(m[r][c]) > simd::absf<T>(m[max][c])) max = r;
+                    if (fabsf(m[r][c]) > fabsf(m[max][c])) max = r;
 
                 if (max == c) return identity(); // TODO: Should probably throw exception or something
 

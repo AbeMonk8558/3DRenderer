@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <immintrin.h>
 #include "3DRenderer.hpp"
+#include "linearMath.hpp"
 
 namespace simd
 {
@@ -73,15 +74,6 @@ namespace simd
         void operator /= (const float_m256& right)
         {
             data = _mm256_div_ps(data, right.data);
-        }
-
-        bool operator == (const float_m256& right)
-        {
-            // For each element, sets every bit to 0 if not equal, otherwise to 1
-            __m256 cmp = _mm256_cmp_ps(data, right.data, _CMP_EQ_OQ);
-
-            // Movemask takes MSB for each float and stores it in a byte. If all are 1, the vectors are equal.
-            return _mm256_movemask_ps(cmp) == 0xff;
         }
 
         float operator [] (int idx) const
@@ -167,4 +159,91 @@ namespace simd
 
         return res;
     }
+}
+
+template <>
+simd::Vec3f_m256 simd::Matrix44f_m256::operator * (const simd::Vec3f_m256& v) const
+{
+    simd::float_m256 nx = v.x * _data[0][0] + v.y * _data[0][1] + v.z * _data[0][2] + _data[0][3];
+    simd::float_m256 ny = v.x * _data[1][0] + v.y * _data[1][1] + v.z * _data[1][2] + _data[1][3];
+    simd::float_m256 nz = v.x * _data[2][0] + v.y * _data[2][1] + v.z * _data[2][2] + _data[2][3];
+    simd::float_m256 nw = v.x * _data[3][0] + v.y * _data[3][1] + v.z * _data[3][2] + _data[3][3];
+
+    return simd::Vec3f_m256(nx, ny, nz);
+}
+
+template <>
+simd::Matrix44f_m256 simd::Matrix44f_m256::inverse() const
+{
+    simd::Matrix44f_m256 inv = identity();
+    simd::Matrix44f_m256 m = *this;
+
+    for (int c = 0; c < 4; c++)
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            if (m[c][c][i] == 0)
+            {
+                int max = c; // Pivot coefficient has row index equal to column index
+
+                // Find row with maximum absolute value coefficient in same column
+                for (int r = 0; r < 4; r++)
+                    if (fabsf(m[r][c][i]) > fabsf(m[max][c][i])) max = r;
+
+                if (max == c) return identity(); // TODO: Should probably throw exception or something
+
+                for (int c2 = 0; c2 < 4; c2++)
+                {
+                    std::swap(m[max][c2][i], m[c][c2][i]);
+                    std::swap(inv[max][c2][i], inv[c][c2][i]);
+                }
+            }
+        }
+
+        // Step 2: Perform forward substitution on the column, setting all coefficients below
+        //         the pivot within the column to 0 through row addition and scaling
+        for (int r = c + 1; r < 4; r++) // Start at the row below the pivot in the column
+        {
+            simd::float_m256 scalar = m[r][c] / m[c][c];
+
+            for (int c2 = 0; c2 < 4; c2++)
+            {
+                m[r][c2] -= scalar * m[c][c2];
+                inv[r][c2] -= scalar * inv[c][c2];
+            }
+
+            m[r][c] = simd::float_m256(0); // Just to be safe
+        }
+    }
+
+    // Step 3: Set all the pivot coefficients to 1 through row scaling
+    for (int r = 0; r < 4; r++)
+    {
+        simd::float_m256 scalar = simd::float_m256(1) / m[r][r];
+
+        for (int c = 0; c < 4; c++)
+        {
+            m[r][c] *= scalar;
+            inv[r][c] *= scalar;
+        }
+
+        m[r][r] = simd::float_m256(1); // Just to be safe
+    }
+
+    // Step 4: Perform backward substitution on all columns above pivot
+    for (int c = 0; c < 4; c++)
+    {
+        for (int r = 0; r < c; r++)
+        {
+            simd::float_m256 scalar = m[r][c];
+
+            for (int c2 = 0; c2 < 4; c2++)
+            {
+                m[r][c2] -= scalar * m[c][c2];
+                inv[r][c2] -= scalar * inv[c][c2];
+            }
+        }
+    }
+
+    return inv;
 }
