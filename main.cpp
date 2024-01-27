@@ -3,6 +3,7 @@
 #include <array>
 #include <algorithm>
 #include <raylib.h>
+#include "SIMD.hpp"
 #include "3DRenderer.hpp"
 
 #include "devUtil.hpp"
@@ -73,9 +74,12 @@ int main(int argc, char** argv)
     float* zBuffer = new float[screenSize * screenSize];
     //Color* frameBuffer = new Color[screenSize * screenSize];
     
-    int nVectorizedVerts = (int)ceilf(verts.size() / 8.0f);
-    Vec2f_m256* proj = new Vec2f_m256[nVectorizedVerts];
-    float_m256* invZ = new float_m256[nVectorizedVerts];
+    const int nVerts = verts.size();
+    const int nVecVerts = (int)ceilf(nVerts / 8.0f);
+    const int nRemVerts = nVerts % 8;
+
+    Vec2f_m256* proj = new Vec2f_m256[nVecVerts];
+    float* invZ = new float[nVerts + nRemVerts];
 
     while (!WindowShouldClose())
     {
@@ -114,45 +118,48 @@ int main(int argc, char** argv)
 
         for (int i = 0; i < verts.size(); i += 8) 
         {
-            Vec3f_m256 v = worldToCamera * vec3fToVec3f_m256(&verts[i]);
+            Vec3f_m256 v = worldToCamera * simd::vec3fToVec3f_m256(&verts[i]);
 
-            invZ[i] = float_m256(1) / -v.z;
+            simd::float_m256 invZCurr = simd::float_m256(1) / -v.z;
             
             // Perform perspective divide, considering near clipping plane
             Vec2f_m256 screen;
-            screen.x = v.x * nearZ * invZ[i];
-            screen.y = v.y * nearZ * invZ[i];
+            screen.x = v.x * nearZ * invZCurr;
+            screen.y = v.y * nearZ * invZCurr;
 
             // Normalized Device Coordinate in range [-1, 1]
             Vec2f_m256 NDC;
-            NDC.x = float_m256(2) * screen.x / canvasSize;
-            NDC.y = float_m256(2) * screen.y / canvasSize;
+            NDC.x = simd::float_m256(2) * screen.x / canvasSize;
+            NDC.y = simd::float_m256(2) * screen.y / canvasSize;
 
-            proj[i].x = (float_m256(1) + NDC.x) / float_m256(2) * (float)screenSize;
-            proj[i].y = (float_m256(1) + NDC.y) / float_m256(2) * (float)screenSize;
+            invZCurr.storeData(&invZ[i]);
+
+            proj[i].x = (simd::float_m256(1) + NDC.x) / simd::float_m256(2) * (float)screenSize;
+            proj[i].y = (simd::float_m256(1) + NDC.y) / simd::float_m256(2) * (float)screenSize;
         }
 
-        int remaining = verts.size() % 8;
-        if (remaining > 0)
+        if (nRemVerts > 0)
         {
-            int i = nVectorizedVerts - 1;
+            int i = nVerts + nRemVerts - 8;
 
-            Vec3f_m256 v = worldToCamera * vec3fToVec3f_m256(&verts[verts.size() - remaining], remaining);
+            Vec3f_m256 v = worldToCamera * simd::vec3fToVec3f_m256(&verts[nVerts - nRemVerts], nRemVerts);
 
-            invZ[i] = float_m256(1) / -v.z;
+            simd::float_m256 invZCurr = simd::float_m256(1) / -v.z;
             
             // Perform perspective divide, considering near clipping plane
             Vec2f_m256 screen;
-            screen.x = v.x * nearZ * invZ[i];
-            screen.y = v.y * nearZ * invZ[i];
+            screen.x = v.x * nearZ * invZCurr;
+            screen.y = v.y * nearZ * invZCurr;
 
             // Normalized Device Coordinate in range [-1, 1]
             Vec2f_m256 NDC;
-            NDC.x = float_m256(2) * screen.x / canvasSize;
-            NDC.y = float_m256(2) * screen.y / canvasSize;
+            NDC.x = simd::float_m256(2) * screen.x / canvasSize;
+            NDC.y = simd::float_m256(2) * screen.y / canvasSize;
 
-            proj[i].x = (float_m256(1) + NDC.x) / float_m256(2) * (float)screenSize;
-            proj[i].y = (float_m256(1) + NDC.y) / float_m256(2) * (float)screenSize;
+            invZCurr.storeData(&invZ[nVerts + nRemVerts - 8]);
+
+            proj[i].x = (simd::float_m256(1) + NDC.x) / simd::float_m256(2) * (float)screenSize;
+            proj[i].y = (simd::float_m256(1) + NDC.y) / simd::float_m256(2) * (float)screenSize;
         }
 
         // All z-buffer coordinates are initially set to infinity so that the first z-value encountered
@@ -177,9 +184,9 @@ int main(int argc, char** argv)
                 const Vec2f& v2 = getSerialValue<Vec2f>(proj, polyIdxs[i][1]);
                 const Vec2f& v3 = getSerialValue<Vec2f>(proj, polyIdxs[i][2]);
 
-                float invZ1 = getSerialValue<float>(invZ, polyIdxs[i][0]);
-                float invZ2 = getSerialValue<float>(invZ, polyIdxs[i][1]);
-                float invZ3 = getSerialValue<float>(invZ, polyIdxs[i][2]);
+                float invZ1 = invZ[polyIdxs[i][0]];
+                float invZ2 = invZ[polyIdxs[i][1]];
+                float invZ3 = invZ[polyIdxs[i][2]];
 
                 float minx = std::max(std::min(std::min(v1.x, v2.x), v3.x), 0.0f);
                 float miny = std::max(std::min(std::min(v1.y, v2.y), v3.y), 0.0f);

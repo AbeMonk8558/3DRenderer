@@ -68,6 +68,9 @@
         "random": "cpp",
         "string_view": "cpp",
         "numbers": "cpp",
-        "fstream": "cpp"
+        "fstream": "cpp",
+        "bitset": "cpp",
+        "iomanip": "cpp",
+        "sstream": "cpp"
     }
 }

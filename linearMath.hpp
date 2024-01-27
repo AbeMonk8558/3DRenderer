@@ -1,8 +1,11 @@
+#pragma once
+
 #include <cmath>
 #include <initializer_list>
 #include <stdexcept>
 #include <immintrin.h>
 #include <raylib.h>
+#include "SIMD.hpp"
 
 template <typename T>
 class Vec2
@@ -239,13 +242,13 @@ public:
         for (int c = 0; c < 4; c++)
         {
             // Step 1: Make sure pivot coefficient is not 0, if so swap rows
-            if (m[c][c] == 0)
+            if (m[c][c] == T(0))
             {
                 int max = c; // Pivot coefficient has row index equal to column index
 
                 // Find row with maximum absolute value coefficient in same column
                 for (int r = 0; r < 4; r++)
-                    if (fabsf(m[r][c]) > fabsf(m[max][c])) max = r;
+                    if (simd::absf<T>(m[r][c]) > simd::absf<T>(m[max][c])) max = r;
 
                 if (max == c) return identity(); // TODO: Should probably throw exception or something
 
@@ -275,7 +278,7 @@ public:
         // Step 3: Set all the pivot coefficients to 1 through row scaling
         for (int r = 0; r < 4; r++)
         {
-            T scalar = 1.0f / m[r][r];
+            T scalar = T(1) / m[r][r];
 
             for (int c = 0; c < 4; c++)
             {
