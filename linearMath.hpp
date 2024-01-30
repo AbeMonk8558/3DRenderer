@@ -5,7 +5,20 @@
 #include <stdexcept>
 #include <immintrin.h>
 #include <raylib.h>
-#include "3DRenderer.hpp"
+
+
+template <typename T>
+class Vec2;
+template <typename T>
+class Vec3;
+template <typename T>
+class Matrix44;
+
+
+using Vec2f = Vec2<float>;
+using Vec3f = Vec3<float>;
+using Matrix44f = Matrix44<float>;
+
 
 template <typename T>
 class Vec2
@@ -70,6 +83,7 @@ public:
     }
 };
 
+
 template <typename T>
 class Vec3
 {
@@ -133,6 +147,7 @@ public:
         );
     }
 };
+
 
 template <typename T>
 class Matrix44
