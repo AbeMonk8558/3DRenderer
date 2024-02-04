@@ -18,9 +18,18 @@ private:
     static float* _zBuffer;
 
     template <typename TVec>
-    static TVec pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p);
+    static inline TVec pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p);
 
-    static __m256 pointOnLine(const simd::Vec2f_m256& v1, const simd::Vec2f_m256& v2, const simd::Vec2f_m256& p);
+    template <typename TVec>
+    static inline TVec pinedaEdgeGetInitial(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const int& minx, const int& miny);
+
+    template <typename TVec>
+    static inline void pinedaEdgeIncrX(TVec& a, const Vec2<TVec>& v1, const Vec2<TVec>& v2);
+
+    template <typename TVec>
+    static inline void pinedaEdgeSetY(TVec& a, const TVec& aInitial, const Vec2<TVec>& v1, const Vec2<TVec>& v2, const int& y, const int& miny);
+
+    static bool pointOnLine(const Vec2f& v1, const Vec2f& v2, const Vec2f& p);
 
     static Vec2f getSerialVec2(int idx);
 };

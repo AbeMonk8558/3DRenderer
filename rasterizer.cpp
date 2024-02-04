@@ -6,16 +6,19 @@
 #include "linearMath.hpp"
 
 #include <fstream>
+#include <chrono>
 #include <iostream>
 #include "devUtil.hpp"
 
+//#define LOG
+#define LIGHTBLUE ((Color){ 173, 216, 230, 255 })
 
 simd::Vec2f_m256* Rasterizer::_proj = nullptr;
 float* Rasterizer::_invZ = nullptr;
 float* Rasterizer::_zBuffer = nullptr;
 
 template <typename TVec>
-TVec Rasterizer::pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p)
+inline TVec Rasterizer::pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p)
 {
     // Using determinants, we can calculate whether a point is the the right of left of an edge
     // (positive means right and vice versa). The 2D cross product is effectively the determinant
@@ -23,12 +26,30 @@ TVec Rasterizer::pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Ve
     return (v2 - v1).cross(p - v1);
 }
 
-__m256 Rasterizer::pointOnLine(const simd::Vec2f_m256& v1, const simd::Vec2f_m256& v2, const simd::Vec2f_m256& p)
+template <typename TVec>
+inline TVec Rasterizer::pinedaEdgeGetInitial(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const int& minx, const int& miny)
 {
-    static const simd::float_m256 epsilon(1);
+    return miny * (v2.x - v1.x) + v1.y * (minx - v2.x) + v2.y * (v1.x - minx);
+}
 
-    simd::Vec2f_m256 nv = (v2 - v1).normalize();
-    simd::float_m256 distSq = (p - (v1 + nv * nv.dot(p - v1))).lengthSq();
+template <typename TVec>
+inline void Rasterizer::pinedaEdgeIncrX(TVec& a, const Vec2<TVec>& v1, const Vec2<TVec>& v2)
+{
+    a += v1.y - v2.y;
+}
+
+template <typename TVec>
+inline void Rasterizer::pinedaEdgeSetY(TVec& a, const TVec& aInitial, const Vec2<TVec>& v1, const Vec2<TVec>& v2, const int& y, const int& miny)
+{
+    a = aInitial + (y - miny + 1) * (v2.x - v1.x);
+}
+
+bool Rasterizer::pointOnLine(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
+{
+    static const float epsilon = 1;
+
+    Vec2f nv = (v2 - v1).normalize();
+    float distSq = (p - (v1 + nv * nv.dot(p - v1))).lengthSq();
     return distSq < epsilon;
 }
 
@@ -42,7 +63,7 @@ Vec2f Rasterizer::getSerialVec2(int idx)
 
 void Rasterizer::start()
 {
-    std::ofstream logger("C:\\Users\\alexa\\Downloads\\3DRenderer.txt");
+    std::ofstream logger("C:\\Users\\alexa\\Documents\\3DRenderer\\Tests\\3DRendererTemp.txt");
 
     std::cout << "Entry" << std::endl;
 
@@ -181,92 +202,103 @@ void Rasterizer::start()
         {
             if (rasterize)
             {
-                Vec2f v1Serial = getSerialVec2(polyIdxs[i][0]);
-                Vec2f v2Serial = getSerialVec2(polyIdxs[i][1]);
-                Vec2f v3Serial = getSerialVec2(polyIdxs[i][2]);
+                const Vec2f& v1 = getSerialVec2(polyIdxs[i][0]);
+                const Vec2f& v2 = getSerialVec2(polyIdxs[i][1]);
+                const Vec2f& v3 = getSerialVec2(polyIdxs[i][2]);
 
-                float minx = std::max(std::min(std::min(v1Serial.x, v2Serial.x), v3Serial.x), 0.0f);
-                float miny = std::max(std::min(std::min(v1Serial.y, v2Serial.y), v3Serial.y), 0.0f);
-                float maxx = std::min(std::max(std::max(v1Serial.x, v2Serial.x), v3Serial.x), _screenSize - 1.0f);
-                float maxy = std::min(std::max(std::max(v1Serial.y, v2Serial.y), v3Serial.y), _screenSize - 1.0f);
+                float invZ1 = _invZ[polyIdxs[i][0]];
+                float invZ2 = _invZ[polyIdxs[i][1]];
+                float invZ3 = _invZ[polyIdxs[i][2]];
 
-                float aSerial = pinedaEdge(v1Serial, v2Serial, v3Serial);
+                float minx = std::max(std::min(std::min(v1.x, v2.x), v3.x), 0.0f);
+                float miny = std::max(std::min(std::min(v1.y, v2.y), v3.y), 0.0f);
+                float maxx = std::min(std::max(std::max(v1.x, v2.x), v3.x), _screenSize - 1.0f);
+                float maxy = std::min(std::max(std::max(v1.y, v2.y), v3.y), _screenSize - 1.0f);
+
+                float invA = 1 / pinedaEdge(v1, v2, v3);
 
                 // Triangles, when projected onto the screen, or because of a 3D rotation, could be defined
                 // in clockwise order relative to the camera. This means all calculations which should be
                 // positive will be negative, and their signs must be reversed. We can tell by whether the
                 // triangle's area is negative that this is the case.
-                float windingSignSerial = aSerial < 0 ? -1 : 1;
-                aSerial *= windingSignSerial;
+                float windingSign = invA < 0 ? -1 : 1;
 
-                simd::Vec2f_m256 v1(simd::float_m256(v1Serial.x), simd::float_m256(v1Serial.y));
-                simd::Vec2f_m256 v2(simd::float_m256(v2Serial.x), simd::float_m256(v2Serial.y));
-                simd::Vec2f_m256 v3(simd::float_m256(v3Serial.x), simd::float_m256(v3Serial.y));
+                const float a1Initial = pinedaEdgeGetInitial(v2, v3, minx, miny);
+                const float a2Initial = pinedaEdgeGetInitial(v3, v1, minx, miny);
+                const float a3Initial = pinedaEdgeGetInitial(v1, v2, minx, miny);
 
-                simd::float_m256 a(aSerial);
-                simd::float_m256 windingSign(windingSignSerial);
-
-                simd::float_m256 invZ1(_invZ[polyIdxs[i][0]]);
-                simd::float_m256 invZ2(_invZ[polyIdxs[i][1]]);
-                simd::float_m256 invZ3(_invZ[polyIdxs[i][2]]);
-
-                int ctr = 0;
-                simd::Vec2f_m256 p;
+                float a1 = a1Initial; 
+                float a2 = a2Initial;
+                float a3 = a3Initial;
 
                 for (int y = miny; y <= maxy; y++)
                 {
+#ifdef LOG
+                    std::chrono::_V2::system_clock::time_point wholeTimerStart = std::chrono::high_resolution_clock::now();
+                    std::chrono::_V2::system_clock::time_point timerStart;
+                    std::chrono::_V2::system_clock::time_point timerStop;
+#endif
                     for (int x = minx; x <= maxx; x++)
                     {   
-                        if (ctr < 8)
-                        {
-                            p.x[ctr] = x;
-                            p.y[ctr] = y;
-                            //logger << '(' << x << ',' << y << ')' << '\n';
+                        Vec2f p(x, y);
 
-                            ctr++;
-
-                            if (y < maxy && x < maxx && ctr != 8)
-                                continue;
-                        }
+#ifdef LOG
+                        timerStart = std::chrono::high_resolution_clock::now();
+#endif
 
                         // Edge function determines whether point lies inside of the triangle using
                         // the determinant (which can determine rotational relationships). Note that
                         // the barycentric coordinate for each vertex is computed using the area between its
                         // opposite edge and the point, hence the arrangment of the vertices in the below lines.
-                        simd::float_m256 a1 = pinedaEdge(v2, v3, p) * windingSign;
-                        simd::float_m256 a2 = pinedaEdge(v3, v1, p) * windingSign;
-                        simd::float_m256 a3 = pinedaEdge(v1, v2, p) * windingSign;
-
-                        // Barycentric coordinates allow z-values of pixels inside a triangle to be interpolated.
-                        a1 /= a;
-                        a2 /= a;
-                        a3 /= a;
-
-                        // Perspective-correct interpolation requires that we interpolate the reciprocal z-coordinates (since
-                        // perspective projection preserves lines, but not distances).
-                        simd::float_m256 z = simd::float_m256(1) / (a1 * invZ1 + a2 * invZ2 + a3 * invZ3);
-
-                        __m256 inTriangle = _mm256_and_ps(_mm256_and_ps(a1 >= 0, a2 >= 0), a3 >= 0);
-                        __m256 onEdge = _mm256_or_ps(_mm256_or_ps(pointOnLine(v1, v2, p), pointOnLine(v2, v3, p)), pointOnLine(v3, v1, p));
-
-                        for (int j = 0; j < ctr; j++)
+                        if (a1 * windingSign < 0 || a2 * windingSign < 0 || a3 * windingSign < 0) 
                         {
-                            int px = (int)p.x[j];
-                            int py = (int)p.y[j];
-
-                            if (inTriangle[j] && z[j] < _zBuffer[(py * _screenSize) + px])
-                            {
-                                _zBuffer[(py * _screenSize) + px] = z[j];
-
-                                if (onEdge[j])
-                                    DrawPixel(px, _screenSize - py - 1, RED);
-                                else
-                                    DrawPixel(px, _screenSize - py - 1, GRAY);
-                            }
+#ifdef LOG
+                            timerStop = std::chrono::high_resolution_clock::now();
+                            logger << "S2: " << (timerStop - timerStart).count() << '\n';
+#endif
+                            pinedaEdgeIncrX(a1, v2, v3);
+                            pinedaEdgeIncrX(a2, v3, v1);
+                            pinedaEdgeIncrX(a3, v1, v2);
+                            continue;
                         }
 
-                        ctr = 0;
+                        // Barycentric coordinates allow z-values of pixels inside a triangle to be interpolated.
+                        // Perspective-correct interpolation requires that we interpolate the reciprocal z-coordinates (since
+                        // perspective projection preserves lines, but not distances).
+                        float z = 1 / (a1 * invA * invZ1 + a2 * invA * invZ2 + a3 * invA * invZ3);
+#ifdef LOG
+                        timerStop = std::chrono::high_resolution_clock::now();
+                        logger << "S2: " << (timerStop - timerStart).count() << '\n';
+
+                        timerStart = std::chrono::high_resolution_clock::now();
+#endif
+                        if (z < _zBuffer[(y * _screenSize) + x])
+                        {
+                            _zBuffer[(y * _screenSize) + x] = z;
+
+                            if (pointOnLine(v1, v2, p) || pointOnLine(v2, v3, p) || pointOnLine(v3, v1, p))
+                                DrawPixel(x, _screenSize - y - 1, LIGHTBLUE);
+                            else
+                                DrawPixel(x, _screenSize - y - 1, GRAY);
+                        }
+
+                        pinedaEdgeIncrX(a1, v2, v3);
+                        pinedaEdgeIncrX(a2, v3, v1);
+                        pinedaEdgeIncrX(a3, v1, v2);
+#ifdef LOG
+                        timerStop = std::chrono::high_resolution_clock::now();
+                        logger << "S3: " << (timerStop - timerStart).count() << '\n';
+#endif
                     }
+
+                    pinedaEdgeSetY(a1, a1Initial, v2, v3, y, miny);
+                    pinedaEdgeSetY(a2, a2Initial, v3, v1, y, miny);
+                    pinedaEdgeSetY(a3, a3Initial, v1, v2, y, miny);
+
+#ifdef LOG
+                    timerStop = std::chrono::high_resolution_clock::now();
+                    logger << "W: " << (timerStop - wholeTimerStart).count() << '\n';
+#endif
                 }
             }
         }
@@ -278,7 +310,6 @@ void Rasterizer::start()
     }
 
     delete[] _zBuffer;
-    //delete[] frameBuffer;
     delete[] _proj;
     delete[] _invZ;
 
