@@ -18,6 +18,9 @@ private:
     static float* _zBuffer;
 
     template <typename TVec>
+    static void perspectiveProject(const int& i, const Vec3<TVec>& p, const Matrix44<TVec>& worldToCamera, const float& canvasSize);
+
+    template <typename TVec>
     static inline TVec pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p);
 
     template <typename TVec>

@@ -18,6 +18,39 @@ float* Rasterizer::_invZ = nullptr;
 float* Rasterizer::_zBuffer = nullptr;
 
 template <typename TVec>
+Vec2<TVec> tileTestCorner(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const int& tSize)
+{
+    // Uses the direction of the surface normal of the triangle's edge to determine
+    // which corner of the tile should be used in testing.
+    Vec2<TVec> n = (v2 - v1).surfaceNorm();
+
+    return Vec2<TVec>(n.x < 0 ? 0 : tSize, n.y < 0 ? 0 : tSize);
+}
+
+template <typename TVec>
+void Rasterizer::perspectiveProject(const int& i, const Vec3<TVec>& p, const Matrix44<TVec>& worldToCamera, const float& canvasSize)
+{
+    Vec3<TVec> v = worldToCamera * p;
+
+    TVec invZCurr = TVec(1) / -v.z;
+    
+    // Perform perspective divide, considering near clipping plane
+    Vec2<TVec> screen;
+    screen.x = v.x * _nearZ * invZCurr;
+    screen.y = v.y * _nearZ * invZCurr;
+
+    invZCurr.storeData(&_invZ[i]);
+
+    // Normalized Device Coordinate in range [-1, 1]
+    Vec2<TVec> NDC;
+    NDC.x = TVec(2) * screen.x / TVec(canvasSize);
+    NDC.y = TVec(2) * screen.y / TVec(canvasSize);
+
+    _proj[i].x = (TVec(1) + NDC.x) / TVec(2) * (float)_screenSize; 
+    _proj[i].y = (TVec(1) + NDC.y) / TVec(2) * (float)_screenSize;
+}
+
+template <typename TVec>
 inline TVec Rasterizer::pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p)
 {
     // Using determinants, we can calculate whether a point is the the right of left of an edge
@@ -95,7 +128,7 @@ void Rasterizer::start()
     const int nRemVerts = nVerts % 8;
 
     _proj = new simd::Vec2f_m256[nVecVerts];
-    _invZ = new float[nVerts + nRemVerts];
+    _invZ = new float[nVerts + 8 - nRemVerts];
 
     while (!WindowShouldClose())
     {
@@ -137,52 +170,17 @@ void Rasterizer::start()
         };
         simd::Matrix44f_m256 worldToCamera = (zAxisRotation * cameraToWorld).inverse();
 
-        float canvasSize = 2 * tanf(FOV * DEG2RAD / 2) * _nearZ;
+        const float canvasSize = 2 * tanf(FOV * DEG2RAD / 2) * _nearZ;
 
         for (int i = 0; i < verts.size(); i += 8) 
         {
-            simd::Vec3f_m256 v = worldToCamera * simd::vec3fToVec3f_m256(&verts[i]);
-
-            simd::float_m256 invZCurr = simd::float_m256(1) / -v.z;
-            
-            // Perform perspective divide, considering near clipping plane
-            simd::Vec2f_m256 screen;
-            screen.x = v.x * _nearZ * invZCurr;
-            screen.y = v.y * _nearZ * invZCurr;
-
-            // Normalized Device Coordinate in range [-1, 1]
-            simd::Vec2f_m256 NDC;
-            NDC.x = simd::float_m256(2) * screen.x / canvasSize;
-            NDC.y = simd::float_m256(2) * screen.y / canvasSize;
-
-            invZCurr.storeData(&_invZ[i]);
-
-            _proj[i].x = (simd::float_m256(1) + NDC.x) / simd::float_m256(2) * (float)_screenSize;
-            _proj[i].y = (simd::float_m256(1) + NDC.y) / simd::float_m256(2) * (float)_screenSize;
+            perspectiveProject(i, simd::vec3fToVec3f_m256(&verts[i]), worldToCamera, canvasSize);
         }
 
         if (nRemVerts > 0)
         {
-            int i = nVerts + nRemVerts - 8;
-
-            simd::Vec3f_m256 v = worldToCamera * simd::vec3fToVec3f_m256(&verts[nVerts - nRemVerts], nRemVerts);
-
-            simd::float_m256 invZCurr = simd::float_m256(1) / -v.z;
-            
-            // Perform perspective divide, considering near clipping plane
-            simd::Vec2f_m256 screen;
-            screen.x = v.x * _nearZ * invZCurr;
-            screen.y = v.y * _nearZ * invZCurr;
-
-            // Normalized Device Coordinate in range [-1, 1]
-            simd::Vec2f_m256 NDC;
-            NDC.x = simd::float_m256(2) * screen.x / canvasSize;
-            NDC.y = simd::float_m256(2) * screen.y / canvasSize;
-
-            invZCurr.storeData(&_invZ[nVerts + nRemVerts - 8]);
-
-            _proj[i].x = (simd::float_m256(1) + NDC.x) / 2 * (float)_screenSize;
-            _proj[i].y = (simd::float_m256(1) + NDC.y) / 2 * (float)_screenSize;
+            perspectiveProject(nVerts - nRemVerts, simd::vec3fToVec3f_m256(&verts[nVerts - nRemVerts], 
+                nRemVerts), worldToCamera, canvasSize);
         }
 
         // All z-buffer coordinates are initially set to infinity so that the first z-value encountered
