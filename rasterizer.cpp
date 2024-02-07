@@ -12,6 +12,7 @@
 
 //#define LOG
 #define LIGHTBLUE ((Color){ 173, 216, 230, 255 })
+#define BARYCENTRIC_EDGE_TEST_EPSILON 5.0f
 
 simd::Vec2f_m256* Rasterizer::_proj = nullptr;
 float* Rasterizer::_invZ = nullptr;
@@ -75,15 +76,6 @@ template <typename TVec>
 inline void Rasterizer::pinedaEdgeSetY(TVec& a, const TVec& aInitial, const Vec2<TVec>& v1, const Vec2<TVec>& v2, const int& y, const int& miny)
 {
     a = aInitial + (y - miny + 1) * (v2.x - v1.x);
-}
-
-bool Rasterizer::pointOnLine(const Vec2f& v1, const Vec2f& v2, const Vec2f& p)
-{
-    static const float epsilon = 1;
-
-    Vec2f nv = (v2 - v1).normalize();
-    float distSq = (p - (v1 + nv * nv.dot(p - v1))).lengthSq();
-    return distSq < epsilon;
 }
 
 Vec2f Rasterizer::getSerialVec2(int idx)
@@ -196,9 +188,9 @@ void Rasterizer::start()
         BeginDrawing();
         ClearBackground(BLACK);
 
-        for (int i = 0; i < polyIdxs.size(); i++)
+        if (rasterize)
         {
-            if (rasterize)
+            for (int i = 0; i < polyIdxs.size(); i++)
             {
                 const Vec2f& v1 = getSerialVec2(polyIdxs[i][0]);
                 const Vec2f& v2 = getSerialVec2(polyIdxs[i][1]);
@@ -213,68 +205,63 @@ void Rasterizer::start()
                 float maxx = std::min(std::max(std::max(v1.x, v2.x), v3.x), _screenSize - 1.0f);
                 float maxy = std::min(std::max(std::max(v1.y, v2.y), v3.y), _screenSize - 1.0f);
 
-                float invA = 1 / pinedaEdge(v1, v2, v3);
+                float a = pinedaEdge(v1, v2, v3);
+                float invA = 1 / a;
 
                 // Triangles, when projected onto the screen, or because of a 3D rotation, could be defined
                 // in clockwise order relative to the camera. This means all calculations which should be
                 // positive will be negative, and their signs must be reversed. We can tell by whether the
-                // triangle's area is negative that this is the case.
-                float windingSign = invA < 0 ? -1 : 1;
+                // triangle's area is negative that this is the case ([Winding]Sign).
+                float wSign = invA < 0 ? -1 : 1;
+                float invSqrtA = 1 / std::sqrt(a * wSign);
 
                 const float a1Initial = pinedaEdgeGetInitial(v2, v3, minx, miny);
                 const float a2Initial = pinedaEdgeGetInitial(v3, v1, minx, miny);
                 const float a3Initial = pinedaEdgeGetInitial(v1, v2, minx, miny);
 
+                // Barycentric coordinates represent weights towards each vertex (add up to 1)
                 float a1 = a1Initial; 
                 float a2 = a2Initial;
                 float a3 = a3Initial;
 
                 for (int y = miny; y <= maxy; y++)
                 {
-#ifdef LOG
-                    std::chrono::_V2::system_clock::time_point wholeTimerStart = std::chrono::high_resolution_clock::now();
-                    std::chrono::_V2::system_clock::time_point timerStart;
-                    std::chrono::_V2::system_clock::time_point timerStop;
-#endif
                     for (int x = minx; x <= maxx; x++)
                     {   
-                        Vec2f p(x, y);
-
-#ifdef LOG
-                        timerStart = std::chrono::high_resolution_clock::now();
-#endif
-
                         // Edge function determines whether point lies inside of the triangle using
                         // the determinant (which can determine rotational relationships). Note that
                         // the barycentric coordinate for each vertex is computed using the area between its
                         // opposite edge and the point, hence the arrangment of the vertices in the below lines.
-                        if (a1 * windingSign < 0 || a2 * windingSign < 0 || a3 * windingSign < 0) 
+                        if (a1 * wSign < 0 || a2 * wSign < 0 || a3 * wSign < 0) 
                         {
-#ifdef LOG
-                            timerStop = std::chrono::high_resolution_clock::now();
-                            logger << "S2: " << (timerStop - timerStart).count() << '\n';
-#endif
                             pinedaEdgeIncrX(a1, v2, v3);
                             pinedaEdgeIncrX(a2, v3, v1);
                             pinedaEdgeIncrX(a3, v1, v2);
                             continue;
                         }
 
+                        // Normalized barycentric coordinates
+                        float a1n = a1 * invA;
+                        float a2n = a2 * invA;
+                        float a3n = a3 * invA;
+
                         // Barycentric coordinates allow z-values of pixels inside a triangle to be interpolated.
                         // Perspective-correct interpolation requires that we interpolate the reciprocal z-coordinates (since
                         // perspective projection preserves lines, but not distances).
-                        float z = 1 / (a1 * invA * invZ1 + a2 * invA * invZ2 + a3 * invA * invZ3);
-#ifdef LOG
-                        timerStop = std::chrono::high_resolution_clock::now();
-                        logger << "S2: " << (timerStop - timerStart).count() << '\n';
+                        float z = 1 / (a1n * invZ1 + a2n * invZ2 + a3n * invZ3);
 
-                        timerStart = std::chrono::high_resolution_clock::now();
-#endif
                         if (z < _zBuffer[(y * _screenSize) + x])
                         {
                             _zBuffer[(y * _screenSize) + x] = z;
 
-                            if (pointOnLine(v1, v2, p) || pointOnLine(v2, v3, p) || pointOnLine(v3, v1, p))
+                            // If a barycentric coordinate is near-zero, that means it lies close to (or on) an edge.
+                            // We scale the epsilon inversely proportional to the sqrt of the triangle's area because a
+                            // smaller triangle's barycentric coordinates will distort absolute distance to edges (since
+                            // such coordinates represent proportional relationships). Scaling by some multiple
+                            // of the triangle's area is required. However, area itself scales quadratically
+                            // relative to distance, which is problematic. The sqrt gives a better approximation relative
+                            // to side length.
+                            if (std::min(std::min(a1n, a2n), a3n) < invSqrtA * BARYCENTRIC_EDGE_TEST_EPSILON)
                                 DrawPixel(x, _screenSize - y - 1, LIGHTBLUE);
                             else
                                 DrawPixel(x, _screenSize - y - 1, GRAY);
@@ -283,20 +270,11 @@ void Rasterizer::start()
                         pinedaEdgeIncrX(a1, v2, v3);
                         pinedaEdgeIncrX(a2, v3, v1);
                         pinedaEdgeIncrX(a3, v1, v2);
-#ifdef LOG
-                        timerStop = std::chrono::high_resolution_clock::now();
-                        logger << "S3: " << (timerStop - timerStart).count() << '\n';
-#endif
                     }
 
                     pinedaEdgeSetY(a1, a1Initial, v2, v3, y, miny);
                     pinedaEdgeSetY(a2, a2Initial, v3, v1, y, miny);
                     pinedaEdgeSetY(a3, a3Initial, v1, v2, y, miny);
-
-#ifdef LOG
-                    timerStop = std::chrono::high_resolution_clock::now();
-                    logger << "W: " << (timerStop - wholeTimerStart).count() << '\n';
-#endif
                 }
             }
         }
