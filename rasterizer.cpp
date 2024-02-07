@@ -208,95 +208,70 @@ void Rasterizer::start()
                 float invZ2 = _invZ[polyIdxs[i][1]];
                 float invZ3 = _invZ[polyIdxs[i][2]];
 
-                float minx = std::max(std::min(std::min(v1.x, v2.x), v3.x), 0.0f);
                 float miny = std::max(std::min(std::min(v1.y, v2.y), v3.y), 0.0f);
-                float maxx = std::min(std::max(std::max(v1.x, v2.x), v3.x), _screenSize - 1.0f);
                 float maxy = std::min(std::max(std::max(v1.y, v2.y), v3.y), _screenSize - 1.0f);
 
-                float invA = 1 / pinedaEdge(v1, v2, v3);
+                float a1 = (v1.y - v2.y); // Since slope is -A/B in standard form, invert the y difference
+                float b1 = (v2.x - v1.x);
+                float c1 = b1 * v1.y + a1 * v1.x;
 
-                // Triangles, when projected onto the screen, or because of a 3D rotation, could be defined
-                // in clockwise order relative to the camera. This means all calculations which should be
-                // positive will be negative, and their signs must be reversed. We can tell by whether the
-                // triangle's area is negative that this is the case.
-                float windingSign = invA < 0 ? -1 : 1;
+                float a2 = (v2.y - v3.y);
+                float b2 = (v3.x - v2.x);
+                float c2 = b2 * v2.y + a2 * v2.x;
 
-                const float a1Initial = pinedaEdgeGetInitial(v2, v3, minx, miny);
-                const float a2Initial = pinedaEdgeGetInitial(v3, v1, minx, miny);
-                const float a3Initial = pinedaEdgeGetInitial(v1, v2, minx, miny);
+                float a3 = (v3.y - v1.y);
+                float b3 = (v1.x - v3.x);
+                float c3 = b3 * v3.y + a3 * v3.x;
 
-                float a1 = a1Initial; 
-                float a2 = a2Initial;
-                float a3 = a3Initial;
-
-                for (int y = miny; y <= maxy; y++)
+                for (int y = miny; y <= maxy; y++) 
                 {
-#ifdef LOG
-                    std::chrono::_V2::system_clock::time_point wholeTimerStart = std::chrono::high_resolution_clock::now();
-                    std::chrono::_V2::system_clock::time_point timerStart;
-                    std::chrono::_V2::system_clock::time_point timerStop;
-#endif
+                    if (a1 == 0 && y == v1.y)
+                    {
+                        for (int x = std::min(v1.x, v2.x); x <= std::max(v1.x, v2.x); x++)
+                            DrawPixel(x, _screenSize - y - 1, GRAY);
+
+                        continue;
+                    }
+                    else if (a2 == 0 && y == v2.y)
+                    {
+                        for (int x = std::min(v2.x, v3.x); x <= std::max(v2.x, v3.x); x++)
+                            DrawPixel(x, _screenSize - y - 1, GRAY);
+
+                        continue;
+                    }
+                    else if (a3 == 0 && y == v3.y)
+                    {
+                        for (int x = std::min(v3.x, v1.x); x <= std::max(v3.x, v1.x); x++)
+                            DrawPixel(x, _screenSize - y - 1, GRAY);
+
+                        continue;
+                    }
+                
+                    int x1 = std::round((c1 - b1 * y) / a1);
+                    int x2 = std::round((c2 - b2 * y) / a2);
+                    int x3 = std::round((c3 - b3 * y) / a3);
+                    int minx = std::max(std::min(std::min(x1, x2), x3), 0);
+                    int maxx = std::min(std::max(std::max(x1, x2), x3), _screenSize - 1);
+
+                    logger << "Minx: " << minx << "\nMaxx: " << maxx << "\n";
+
                     for (int x = minx; x <= maxx; x++)
                     {   
-                        Vec2f p(x, y);
-
-#ifdef LOG
-                        timerStart = std::chrono::high_resolution_clock::now();
-#endif
-
-                        // Edge function determines whether point lies inside of the triangle using
-                        // the determinant (which can determine rotational relationships). Note that
-                        // the barycentric coordinate for each vertex is computed using the area between its
-                        // opposite edge and the point, hence the arrangment of the vertices in the below lines.
-                        if (a1 * windingSign < 0 || a2 * windingSign < 0 || a3 * windingSign < 0) 
-                        {
-#ifdef LOG
-                            timerStop = std::chrono::high_resolution_clock::now();
-                            logger << "S2: " << (timerStop - timerStart).count() << '\n';
-#endif
-                            pinedaEdgeIncrX(a1, v2, v3);
-                            pinedaEdgeIncrX(a2, v3, v1);
-                            pinedaEdgeIncrX(a3, v1, v2);
-                            continue;
-                        }
-
                         // Barycentric coordinates allow z-values of pixels inside a triangle to be interpolated.
                         // Perspective-correct interpolation requires that we interpolate the reciprocal z-coordinates (since
                         // perspective projection preserves lines, but not distances).
-                        float z = 1 / (a1 * invA * invZ1 + a2 * invA * invZ2 + a3 * invA * invZ3);
-#ifdef LOG
-                        timerStop = std::chrono::high_resolution_clock::now();
-                        logger << "S2: " << (timerStop - timerStart).count() << '\n';
+                        float z = 0; //1 / (a1 * invA * invZ1 + a2 * invA * invZ2 + a3 * invA * invZ3);
 
-                        timerStart = std::chrono::high_resolution_clock::now();
-#endif
                         if (z < _zBuffer[(y * _screenSize) + x])
                         {
                             _zBuffer[(y * _screenSize) + x] = z;
 
-                            if (pointOnLine(v1, v2, p) || pointOnLine(v2, v3, p) || pointOnLine(v3, v1, p))
-                                DrawPixel(x, _screenSize - y - 1, LIGHTBLUE);
-                            else
+                            // if (pointOnLine(v1, v2, p) || pointOnLine(v2, v3, p) || pointOnLine(v3, v1, p))
+                            //     DrawPixel(x, _screenSize - y - 1, LIGHTBLUE);
+                            // else
                                 DrawPixel(x, _screenSize - y - 1, GRAY);
                         }
-
-                        pinedaEdgeIncrX(a1, v2, v3);
-                        pinedaEdgeIncrX(a2, v3, v1);
-                        pinedaEdgeIncrX(a3, v1, v2);
-#ifdef LOG
-                        timerStop = std::chrono::high_resolution_clock::now();
-                        logger << "S3: " << (timerStop - timerStart).count() << '\n';
-#endif
                     }
-
-                    pinedaEdgeSetY(a1, a1Initial, v2, v3, y, miny);
-                    pinedaEdgeSetY(a2, a2Initial, v3, v1, y, miny);
-                    pinedaEdgeSetY(a3, a3Initial, v1, v2, y, miny);
-
-#ifdef LOG
-                    timerStop = std::chrono::high_resolution_clock::now();
-                    logger << "W: " << (timerStop - wholeTimerStart).count() << '\n';
-#endif
                 }
             }
         }
