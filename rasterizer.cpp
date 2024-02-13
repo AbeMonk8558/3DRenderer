@@ -10,10 +10,6 @@
 #include <iostream>
 #include "devUtil.hpp"
 
-//#define LOG
-#define LIGHTBLUE ((Color){ 173, 216, 230, 255 })
-#define BARYCENTRIC_EDGE_TEST_EPSILON 5.0f
-
 simd::Vec2f_m256* Rasterizer::_proj = nullptr;
 float* Rasterizer::_invZ = nullptr;
 float* Rasterizer::_zBuffer = nullptr;
@@ -90,13 +86,6 @@ void Rasterizer::start()
 {
     std::ofstream logger("C:\\Users\\alexa\\Documents\\3DRenderer\\Tests\\3DRendererTemp.txt");
 
-    std::cout << "Entry" << std::endl;
-
-    // DO NOT MODIFY IN CODE
-    float cameraX = 0;
-    float cameraY = 0;
-    float cameraZ = 0;
-    float cameraRoll = 0; // Degrees
     float FOV = 90;
     bool rasterize = false;
 
@@ -122,45 +111,79 @@ void Rasterizer::start()
     _proj = new simd::Vec2f_m256[nVecVerts];
     _invZ = new float[nVerts + 8 - nRemVerts];
 
+    simd::Matrix44f_m256 cameraToWorld = simd::Matrix44f_m256::identity();
+
     while (!WindowShouldClose())
     {
+        float dCameraX = 0;
+        float dCameraY = 0;
+        float dCameraZ = 0;
+        float dCameraPitch = 0; // Around x-axis
+        float dCameraYaw = 0; // Around y-axis
+        float dCameraRoll = 0; // Around z-axis
+
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
         {
             Vec2f drag = static_cast<Vec2f>(GetGestureDragVector());
 
             if (IsKeyDown(KEY_LEFT_CONTROL))
             {
-                cameraRoll -= drag.x * 3;
+                dCameraRoll -= drag.x * 3;
+                dCameraPitch -= drag.y * 3;
             }
             else if (IsKeyDown(KEY_LEFT_SHIFT))
             {
-                cameraZ += drag.y * 5;
+                dCameraZ += drag.y * 5;
             }
             else
             {
-                cameraX += drag.x * 50;
-                cameraY -= drag.y * 50;
+                dCameraX += drag.x * 50;
+                dCameraY -= drag.y * 50;
             }
         }
         if (IsKeyDown(KEY_W)) FOV += 1;
         if (IsKeyDown(KEY_S)) FOV -= 1;
         if (IsKeyPressed(KEY_R)) rasterize = !rasterize;
 
+        simd::Matrix44f_m256 xAxisRotation
+        {
+            1, 0, 0, 0,
+            0, std::cos(dCameraPitch * DEG2RAD), -std::sin(dCameraPitch * DEG2RAD), 0,
+            0, std::sin(dCameraPitch * DEG2RAD), std::cos(dCameraPitch * DEG2RAD), 0,
+            0, 0, 0, 1
+        };
+
+        simd::Matrix44f_m256 yAxisRotation
+        {
+            std::cos(dCameraYaw * DEG2RAD), 0, std::sin(dCameraYaw * DEG2RAD), 0,
+            0, 1, 0, 0,
+            -std::sin(dCameraYaw * DEG2RAD), 0, std::cos(dCameraYaw * DEG2RAD), 0,
+            0, 0, 0, 1
+        };
+
         simd::Matrix44f_m256 zAxisRotation
         {
-            cosf(cameraRoll * DEG2RAD), -sinf(cameraRoll * DEG2RAD), 0, 0,
-            sinf(cameraRoll * DEG2RAD), cosf(cameraRoll * DEG2RAD), 0, 0,
+            std::cos(dCameraRoll * DEG2RAD), -std::sin(dCameraRoll * DEG2RAD), 0, 0,
+            std::sin(dCameraRoll * DEG2RAD), std::cos(dCameraRoll * DEG2RAD), 0, 0,
             0, 0, 1, 0,
             0, 0, 0, 1
         };
-        simd::Matrix44f_m256 cameraToWorld 
+
+        simd::Matrix44f_m256 translation
         {
-            1, 0, 0, cameraX,
-            0, 1, 0, cameraY,
-            0, 0, 1, cameraZ,
+            1, 0, 0, dCameraX,
+            0, 1, 0, dCameraY,
+            0, 0, 1, dCameraZ,
             0, 0, 0, 1
         };
-        simd::Matrix44f_m256 worldToCamera = (zAxisRotation * cameraToWorld).inverse();
+
+        cameraToWorld[0][3] += dCameraX;
+        cameraToWorld[1][3] += dCameraY;
+        cameraToWorld[2][3] += dCameraZ;
+
+        cameraToWorld = xAxisRotation * yAxisRotation * zAxisRotation * cameraToWorld;
+
+        simd::Matrix44f_m256 worldToCamera = cameraToWorld.inverse();
 
         const float canvasSize = 2 * tanf(FOV * DEG2RAD / 2) * _nearZ;
 
@@ -215,6 +238,9 @@ void Rasterizer::start()
                 float wSign = invA < 0 ? -1 : 1;
                 float invSqrtA = 1 / std::sqrt(a * wSign);
 
+                // The edge function has multiple values that stay perpetually constant, and we
+                // can optimize computation by only incrementing necessary parts of the equation every
+                // x and y step.
                 const float a1Initial = pinedaEdgeGetInitial(v2, v3, minx, miny);
                 const float a2Initial = pinedaEdgeGetInitial(v3, v1, minx, miny);
                 const float a3Initial = pinedaEdgeGetInitial(v1, v2, minx, miny);
@@ -224,9 +250,13 @@ void Rasterizer::start()
                 float a2 = a2Initial;
                 float a3 = a3Initial;
 
-                for (int y = miny; y <= maxy; y++)
+                Vec2f testCorner1 = tileTestCorner(v1, v2, TILE_SIZE);
+                Vec2f testCorner2 = tileTestCorner(v2, v3, TILE_SIZE);
+                Vec2f testCorner3 = tileTestCorner(v3, v1, TILE_SIZE);
+
+                for (int y = miny; y <= maxy; y++/*+= TILE_SIZE*/)
                 {
-                    for (int x = minx; x <= maxx; x++)
+                    for (int x = minx; x <= maxx; x++/*+= TILE_SIZE*/)
                     {   
                         // Edge function determines whether point lies inside of the triangle using
                         // the determinant (which can determine rotational relationships). Note that

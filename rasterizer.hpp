@@ -3,6 +3,10 @@
 #include "linearMath.hpp"
 #include "SIMD.hpp"
 
+#define LIGHTBLUE ((Color){ 173, 216, 230, 255 })
+#define BARYCENTRIC_EDGE_TEST_EPSILON 5.0f
+#define TILE_SIZE 8
+
 class Rasterizer
 {
 public:
