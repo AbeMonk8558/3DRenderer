@@ -128,8 +128,8 @@ void Rasterizer::start()
 
             if (IsKeyDown(KEY_LEFT_CONTROL))
             {
-                dCameraRoll -= drag.x * 3;
-                dCameraPitch -= drag.y * 3;
+                dCameraRoll -= drag.y * 3;
+                dCameraYaw -= drag.x * 3;
             }
             else if (IsKeyDown(KEY_LEFT_SHIFT))
             {
@@ -169,19 +169,11 @@ void Rasterizer::start()
             0, 0, 0, 1
         };
 
-        simd::Matrix44f_m256 translation
-        {
-            1, 0, 0, dCameraX,
-            0, 1, 0, dCameraY,
-            0, 0, 1, dCameraZ,
-            0, 0, 0, 1
-        };
-
         cameraToWorld[0][3] += dCameraX;
         cameraToWorld[1][3] += dCameraY;
         cameraToWorld[2][3] += dCameraZ;
 
-        cameraToWorld = xAxisRotation * yAxisRotation * zAxisRotation * cameraToWorld;
+        cameraToWorld = zAxisRotation * yAxisRotation * cameraToWorld;
 
         simd::Matrix44f_m256 worldToCamera = cameraToWorld.inverse();
 
