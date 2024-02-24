@@ -1,3 +1,5 @@
+# Linear Transformations
+
 For some reason, successive 3D Euler rotations are much more confusing than they should be. 
 Or maybe I'm stupid. Hopefully, by writing it down, this topic will bake itself into my brain. This was written
 quickly, so don't expect to gain any deep insight from reading it.
