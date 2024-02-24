@@ -242,14 +242,44 @@ void Rasterizer::start()
                 float a2 = a2Initial;
                 float a3 = a3Initial;
 
-                Vec2f testCorner1 = tileTestCorner(v1, v2, TILE_SIZE);
-                Vec2f testCorner2 = tileTestCorner(v2, v3, TILE_SIZE);
-                Vec2f testCorner3 = tileTestCorner(v3, v1, TILE_SIZE);
+                // Gets the offsets (from the bttm-left corner of the tile) of the corners to test for each
+                // triangle edge
+                Vec2f offsetC1 = tileTestCorner(v1, v2, TILE_SIZE);
+                Vec2f offsetC2 = tileTestCorner(v2, v3, TILE_SIZE);
+                Vec2f offsetC3 = tileTestCorner(v3, v1, TILE_SIZE);
+                Vec2f offsetE1((static_cast<int>(offsetC1.x) + 1) % 2, (static_cast<int>(offsetC1.y) + 1) % 2);
+                Vec2f offsetE2((static_cast<int>(offsetC2.x) + 1) % 2, (static_cast<int>(offsetC2.y) + 1) % 2);
+                Vec2f offsetE3((static_cast<int>(offsetC3.x) + 1) % 2, (static_cast<int>(offsetC3.y) + 1) % 2);
 
-                for (int y = miny; y <= maxy; y++/*+= TILE_SIZE*/)
+                for (int y = miny; y <= maxy; y += TILE_SIZE)
                 {
-                    for (int x = minx; x <= maxx; x++/*+= TILE_SIZE*/)
+                    for (int x = minx; x <= maxx; x += TILE_SIZE)
                     {   
+                        Vec2f p(x, y);
+
+                        // Calculate whether the closest corner to each edge is inside the triangle
+                        float ac1 = pinedaEdge(v1, v2, p + offsetC1);
+                        float ac2 = pinedaEdge(v2, v3, p + offsetC2);
+                        float ac3 = pinedaEdge(v3, v1, p + offsetC3);
+
+                        // If any aren't, then the tile is fully outside the triangle
+                        if (ac1 * wSign < 0 || ac2 * wSign < 0 || ac3 * wSign < 0)
+                        {
+                            // pinedaEdgeIncrX(a1, v2, v3);
+                            // pinedaEdgeIncrX(a2, v3, v1);
+                            // pinedaEdgeIncrX(a3, v1, v2);
+                            continue;
+                        } 
+
+                        float ae1 = pinedaEdge(v1, v2, p + offsetE1);
+                        float ae2 = pinedaEdge(v2, v3, p + offsetE2);
+                        float ae3 = pinedaEdge(v3, v1, p + offsetE3);   
+
+                        if (ae1 * wSign >= 0 && ae2 * wSign >= 0 && ae3 * wSign >= 0)    
+                        {
+                            // Rasterize entire tile
+                        }     
+
                         // Edge function determines whether point lies inside of the triangle using
                         // the determinant (which can determine rotational relationships). Note that
                         // the barycentric coordinate for each vertex is computed using the area between its
