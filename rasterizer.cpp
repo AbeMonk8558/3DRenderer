@@ -10,9 +10,12 @@
 #include "devUtil.hpp"
 
 
-simd::Vec2f_m256* Rasterizer::_proj = nullptr;
+Vec2f* Rasterizer::_proj = nullptr;
 float* Rasterizer::_invZ = nullptr;
-float* Rasterizer::_zBuffer = nullptr;
+float** Rasterizer::_zBuffer = nullptr;
+RenderTileList* Rasterizer::_tileBins = nullptr;
+
+const simd::float_m256 Rasterizer::tileEdgeFunctionIncr({1});
 
 template <typename TVec>
 TVec Rasterizer::pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p)
@@ -23,42 +26,60 @@ TVec Rasterizer::pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Ve
     return (v2 - v1).cross(p - v1);
 }
 
-__m256 Rasterizer::pointOnLine(const simd::Vec2f_m256& v1, const simd::Vec2f_m256& v2, const simd::Vec2f_m256& p)
+void Rasterizer::perspectiveProject(const int& i, const simd::Vec3f_m256& p, const simd::Matrix44f_m256& worldToCamera, 
+    const float& canvasSizeX, const float& canvasSizeY)
 {
-    static const simd::float_m256 epsilon(1);
+    simd::Vec3f_m256 v = worldToCamera * p;
 
-    simd::Vec2f_m256 nv = (v2 - v1).normalize();
-    simd::float_m256 distSq = (p - (v1 + nv * nv.dot(p - v1))).lengthSq();
-    return distSq < epsilon;
+    simd::float_m256 invZCurr = simd::float_m256(1) / -v.z;
+    
+    // Perform perspective divide, considering near clipping plane
+    simd::Vec2f_m256 screen;
+    screen.x = v.x * _nearZ * invZCurr;
+    screen.y = v.y * _nearZ * invZCurr;
+
+    // Normalized Device Coordinate in range [-1, 1]
+    simd::Vec2f_m256 NDC;
+    NDC.x = simd::float_m256(2) * screen.x / canvasSizeX;
+    NDC.y = simd::float_m256(2) * screen.y / canvasSizeY;
+
+    simd::Vec2f_m256 raster;
+    raster.x = (simd::float_m256(1) + NDC.x) / 2 * (float)_screenWidth;
+    raster.y = (simd::float_m256(1) + NDC.y) / 2 * (float)_screenHeight;
+
+    invZCurr.storeData(&_invZ[i]);
+
+    for (int j = 0; j < 8; j++)
+    {
+        _proj[i + j] = Vec2f(raster.x[j], raster.y[j]);
+    }
 }
 
-Vec2f Rasterizer::getSerialVec2(int idx)
+Vec2f Rasterizer::getTrivialRejectOffset(const Vec2f& v1, const Vec2f& v2, int tileWidth, int tileHeight)
 {
-    const simd::Vec2f_m256& vec = _proj[idx / 8];
-    int vecIdx = idx % 8;
+    // Uses the direction of the surface normal of the triangle's edge to determine
+    // which corner of the tile should be used in testing.
+    Vec2f n = (v2 - v1).surfaceNorm();
 
-    return Vec2f(vec.x[vecIdx], vec.y[vecIdx]);
+    return Vec2f(n.x < 0 ? 0 : tileWidth, n.y < 0 ? 0 : tileHeight);
+}
+
+Vec2f Rasterizer::getTrivialAcceptOffset(const Vec2f& trivialReject, int tileWidth, int tileHeight)
+{
+    return Vec2f(((int)trivialReject.x + tileWidth) % (2 * tileWidth), 
+        ((int)trivialReject.y + tileHeight) % (2 * tileHeight));
 }
 
 void Rasterizer::start()
 {
-    std::ofstream logger("C:\\Users\\alexa\\Downloads\\3DRenderer.txt");
+    std::ofstream logger("C:\\Users\\alexa\\Documents\\3DRenderer\\Tests\\3DRendererTemp.txt");
 
-    std::cout << "Entry" << std::endl;
-
-    // DO NOT MODIFY IN CODE
-    float cameraX = 0;
-    float cameraY = 0;
-    float cameraZ = 0;
-    float cameraRoll = 0; // Degrees
     float FOV = 90;
-    bool rasterize = false;
-
     char FPS[16];
 
     SetTraceLogLevel(LOG_FATAL);
     SetTargetFPS(60);
-    InitWindow(_screenSize, _screenSize, "Based 3D Render");
+    InitWindow(_screenWidth, _screenHeight, "Based 3D Render");
 
     std::vector<Vec3f> verts;
     std::vector<std::array<int, 3>> polyIdxs;
@@ -67,218 +88,199 @@ void Rasterizer::start()
         v.z -= _nearZ + _cubeSize / 2; // Makes them more easily visible
 
     // IMPORTANT: Overflows stack if not heap allocated
-    _zBuffer = new float[_screenSize * _screenSize];
+    _zBuffer = new float*[_screenHeight];
+    for (int i = 0; i < _screenHeight; i++)
+    {
+        _zBuffer[i] = new float[_screenWidth];
+    }
     
     const int nVerts = verts.size();
-    const int nVecVerts = (int)ceilf(nVerts / 8.0f);
     const int nRemVerts = nVerts % 8;
+    const int nPoly = polyIdxs.size();
+    const int nTiles = (_screenWidth / TILE_WIDTH) * (_screenHeight / TILE_HEIGHT);
 
-    _proj = new simd::Vec2f_m256[nVecVerts];
-    _invZ = new float[nVerts + nRemVerts];
+    // Since the number of vertices may not be divisible by 8 to evenly hold all 8-float AVX vectors, we
+    // allocate a small buffer space at the end.
+    _proj = new Vec2f[nVerts + 8 - nRemVerts];
+    _invZ = new float[nVerts + 8 - nRemVerts];
+    _tileBins = new RenderTileList[nTiles];
+
+    simd::Matrix44f_m256 cameraToWorld = simd::Matrix44f_m256::identity();
 
     while (!WindowShouldClose())
     {
+        float dCameraX = 0;
+        float dCameraY = 0;
+        float dCameraZ = 0;
+        float dCameraPitch = 0; // Around x-axis
+        float dCameraYaw = 0; // Around y-axis
+        float dCameraRoll = 0; // Around z-axis
+
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
         {
             Vec2f drag = static_cast<Vec2f>(GetGestureDragVector());
 
             if (IsKeyDown(KEY_LEFT_CONTROL))
             {
-                cameraRoll -= drag.x * 3;
+                dCameraRoll -= drag.y * 3;
+                dCameraYaw -= drag.x * 3;
             }
             else if (IsKeyDown(KEY_LEFT_SHIFT))
             {
-                cameraZ += drag.y * 5;
+                dCameraZ += drag.y * 5;
             }
             else
             {
-                cameraX += drag.x * 50;
-                cameraY -= drag.y * 50;
+                dCameraX += drag.x * 50;
+                dCameraY -= drag.y * 50;
             }
         }
         if (IsKeyDown(KEY_W)) FOV += 1;
         if (IsKeyDown(KEY_S)) FOV -= 1;
-        if (IsKeyPressed(KEY_R)) rasterize = !rasterize;
+
+        simd::Matrix44f_m256 xAxisRotation
+        {
+            1, 0, 0, 0,
+            0, std::cos(dCameraPitch * DEG2RAD), -std::sin(dCameraPitch * DEG2RAD), 0,
+            0, std::sin(dCameraPitch * DEG2RAD), std::cos(dCameraPitch * DEG2RAD), 0,
+            0, 0, 0, 1
+        };
+
+        simd::Matrix44f_m256 yAxisRotation
+        {
+            std::cos(dCameraYaw * DEG2RAD), 0, std::sin(dCameraYaw * DEG2RAD), 0,
+            0, 1, 0, 0,
+            -std::sin(dCameraYaw * DEG2RAD), 0, std::cos(dCameraYaw * DEG2RAD), 0,
+            0, 0, 0, 1
+        };
 
         simd::Matrix44f_m256 zAxisRotation
         {
-            cosf(cameraRoll * DEG2RAD), -sinf(cameraRoll * DEG2RAD), 0, 0,
-            sinf(cameraRoll * DEG2RAD), cosf(cameraRoll * DEG2RAD), 0, 0,
+            std::cos(dCameraRoll * DEG2RAD), -std::sin(dCameraRoll * DEG2RAD), 0, 0,
+            std::sin(dCameraRoll * DEG2RAD), std::cos(dCameraRoll * DEG2RAD), 0, 0,
             0, 0, 1, 0,
             0, 0, 0, 1
         };
-        simd::Matrix44f_m256 cameraToWorld 
-        {
-            1, 0, 0, cameraX,
-            0, 1, 0, cameraY,
-            0, 0, 1, cameraZ,
-            0, 0, 0, 1
-        };
-        simd::Matrix44f_m256 worldToCamera = (zAxisRotation * cameraToWorld).inverse();
 
-        float canvasSize = 2 * tanf(FOV * DEG2RAD / 2) * _nearZ;
+        cameraToWorld[0][3] += dCameraX;
+        cameraToWorld[1][3] += dCameraY;
+        cameraToWorld[2][3] += dCameraZ;
+
+        cameraToWorld = zAxisRotation * yAxisRotation * xAxisRotation * cameraToWorld;
+        simd::Matrix44f_m256 worldToCamera = cameraToWorld.inverse();
+
+        const float canvasSizeX = 2 * std::tan(FOV * DEG2RAD / 2) * _nearZ;
+        const float canvasSizeY = canvasSizeX * (_screenHeight / _screenWidth);
 
         for (int i = 0; i < verts.size(); i += 8) 
         {
-            simd::Vec3f_m256 v = worldToCamera * simd::vec3fToVec3f_m256(&verts[i]);
-
-            simd::float_m256 invZCurr = simd::float_m256(1) / -v.z;
-            
-            // Perform perspective divide, considering near clipping plane
-            simd::Vec2f_m256 screen;
-            screen.x = v.x * _nearZ * invZCurr;
-            screen.y = v.y * _nearZ * invZCurr;
-
-            // Normalized Device Coordinate in range [-1, 1]
-            simd::Vec2f_m256 NDC;
-            NDC.x = simd::float_m256(2) * screen.x / canvasSize;
-            NDC.y = simd::float_m256(2) * screen.y / canvasSize;
-
-            invZCurr.storeData(&_invZ[i]);
-
-            _proj[i].x = (simd::float_m256(1) + NDC.x) / simd::float_m256(2) * (float)_screenSize;
-            _proj[i].y = (simd::float_m256(1) + NDC.y) / simd::float_m256(2) * (float)_screenSize;
+            perspectiveProject(i, simd::vec3fToVec3f_m256(&verts[i]), worldToCamera, canvasSizeX,
+                canvasSizeY);
         }
 
         if (nRemVerts > 0)
         {
-            int i = nVerts + nRemVerts - 8;
-
-            simd::Vec3f_m256 v = worldToCamera * simd::vec3fToVec3f_m256(&verts[nVerts - nRemVerts], nRemVerts);
-
-            simd::float_m256 invZCurr = simd::float_m256(1) / -v.z;
-            
-            // Perform perspective divide, considering near clipping plane
-            simd::Vec2f_m256 screen;
-            screen.x = v.x * _nearZ * invZCurr;
-            screen.y = v.y * _nearZ * invZCurr;
-
-            // Normalized Device Coordinate in range [-1, 1]
-            simd::Vec2f_m256 NDC;
-            NDC.x = simd::float_m256(2) * screen.x / canvasSize;
-            NDC.y = simd::float_m256(2) * screen.y / canvasSize;
-
-            invZCurr.storeData(&_invZ[nVerts + nRemVerts - 8]);
-
-            _proj[i].x = (simd::float_m256(1) + NDC.x) / 2 * (float)_screenSize;
-            _proj[i].y = (simd::float_m256(1) + NDC.y) / 2 * (float)_screenSize;
+            perspectiveProject(nVerts - nRemVerts, simd::vec3fToVec3f_m256(&verts[nVerts - nRemVerts], 
+                nRemVerts), worldToCamera, canvasSizeX, canvasSizeY);
         }
 
         // All z-buffer coordinates are initially set to infinity so that the first z-value encountered
         // is garuanteed to be less than the current value.
-        for (int y = 0; y < _screenSize; y++)
+        for (int y = 0; y < _screenHeight; y++)
         {
-            for (int x = 0; x < _screenSize; x++)
+            for (int x = 0; x < _screenWidth; x++)
             {
-                _zBuffer[(y * _screenSize) + x] = INFINITY;
+                _zBuffer[y][x] = INFINITY;
             }
         }
         
         BeginDrawing();
         ClearBackground(BLACK);
 
-        for (int i = 0; i < polyIdxs.size(); i++)
+        // Sort triangles into tile-based bins
+        for (int i = 0; i < nPoly; i++)
         {
-            if (rasterize)
+            const Vec2f& v1 = _proj[polyIdxs[i][0]];
+            const Vec2f& v2 = _proj[polyIdxs[i][1]];
+            const Vec2f& v3 = _proj[polyIdxs[i][2]];
+
+            float wSign = pinedaEdge(v1, v2, v3) >= 0 ? 1 : -1;
+
+            Vec2f trivialReject1 = getTrivialRejectOffset(v1, v2, TILE_WIDTH, TILE_HEIGHT);
+            Vec2f trivialAccept1 = getTrivialAcceptOffset(trivialReject1, TILE_WIDTH, TILE_HEIGHT);
+
+            Vec2f trivialReject2 = getTrivialRejectOffset(v2, v3, TILE_WIDTH, TILE_HEIGHT);
+            Vec2f trivialAccept2 = getTrivialAcceptOffset(trivialReject2, TILE_WIDTH, TILE_HEIGHT);
+
+            Vec2f trivialReject3 = getTrivialRejectOffset(v3, v1, TILE_WIDTH, TILE_HEIGHT);
+            Vec2f trivialAccept3 = getTrivialAcceptOffset(trivialReject3, TILE_WIDTH, TILE_HEIGHT);
+
+            int tileCtr = 0;
+            for (int y = 0; y < _screenHeight; y += TILE_HEIGHT)
             {
-                Vec2f v1Serial = getSerialVec2(polyIdxs[i][0]);
-                Vec2f v2Serial = getSerialVec2(polyIdxs[i][1]);
-                Vec2f v3Serial = getSerialVec2(polyIdxs[i][2]);
-
-                float minx = std::max(std::min(std::min(v1Serial.x, v2Serial.x), v3Serial.x), 0.0f);
-                float miny = std::max(std::min(std::min(v1Serial.y, v2Serial.y), v3Serial.y), 0.0f);
-                float maxx = std::min(std::max(std::max(v1Serial.x, v2Serial.x), v3Serial.x), _screenSize - 1.0f);
-                float maxy = std::min(std::max(std::max(v1Serial.y, v2Serial.y), v3Serial.y), _screenSize - 1.0f);
-
-                float aSerial = pinedaEdge(v1Serial, v2Serial, v3Serial);
-
-                // Triangles, when projected onto the screen, or because of a 3D rotation, could be defined
-                // in clockwise order relative to the camera. This means all calculations which should be
-                // positive will be negative, and their signs must be reversed. We can tell by whether the
-                // triangle's area is negative that this is the case.
-                float windingSignSerial = aSerial < 0 ? -1 : 1;
-                aSerial *= windingSignSerial;
-
-                simd::Vec2f_m256 v1(simd::float_m256(v1Serial.x), simd::float_m256(v1Serial.y));
-                simd::Vec2f_m256 v2(simd::float_m256(v2Serial.x), simd::float_m256(v2Serial.y));
-                simd::Vec2f_m256 v3(simd::float_m256(v3Serial.x), simd::float_m256(v3Serial.y));
-
-                simd::float_m256 a(aSerial);
-                simd::float_m256 windingSign(windingSignSerial);
-
-                simd::float_m256 invZ1(_invZ[polyIdxs[i][0]]);
-                simd::float_m256 invZ2(_invZ[polyIdxs[i][1]]);
-                simd::float_m256 invZ3(_invZ[polyIdxs[i][2]]);
-
-                int ctr = 0;
-                simd::Vec2f_m256 p;
-
-                for (int y = miny; y <= maxy; y++)
+                for (int x = 0; x < _screenWidth; x += TILE_WIDTH)
                 {
-                    for (int x = minx; x <= maxx; x++)
-                    {   
-                        if (ctr < 8)
-                        {
-                            p.x[ctr] = x;
-                            p.y[ctr] = y;
-                            //logger << '(' << x << ',' << y << ')' << '\n';
+                    Vec2f p(x, y);
+                    RenderTileList& tileList = _tileBins[tileCtr++];
 
-                            ctr++;
+                    float r1 = pinedaEdge(v1, v2, p + trivialReject1) * wSign;
+                    float r2 = pinedaEdge(v2, v3, p + trivialReject2) * wSign;
+                    float r3 = pinedaEdge(v3, v1, p + trivialReject3) * wSign;
 
-                            if (y < maxy && x < maxx && ctr != 8)
-                                continue;
-                        }
+                    if (r1 * wSign < 0 || r2 * wSign < 0 || r3 * wSign < 0)
+                        continue;
 
-                        // Edge function determines whether point lies inside of the triangle using
-                        // the determinant (which can determine rotational relationships). Note that
-                        // the barycentric coordinate for each vertex is computed using the area between its
-                        // opposite edge and the point, hence the arrangment of the vertices in the below lines.
-                        simd::float_m256 a1 = pinedaEdge(v2, v3, p) * windingSign;
-                        simd::float_m256 a2 = pinedaEdge(v3, v1, p) * windingSign;
-                        simd::float_m256 a3 = pinedaEdge(v1, v2, p) * windingSign;
+                    tileList.extend();
 
-                        // Barycentric coordinates allow z-values of pixels inside a triangle to be interpolated.
-                        a1 /= a;
-                        a2 /= a;
-                        a3 /= a;
+                    tileList.last->polyIdx = i;
+                    tileList.last->x = x;
+                    tileList.last->y = y;
 
-                        // Perspective-correct interpolation requires that we interpolate the reciprocal z-coordinates (since
-                        // perspective projection preserves lines, but not distances).
-                        simd::float_m256 z = simd::float_m256(1) / (a1 * invZ1 + a2 * invZ2 + a3 * invZ3);
-
-                        __m256 inTriangle = _mm256_and_ps(_mm256_and_ps(a1 >= 0, a2 >= 0), a3 >= 0);
-                        __m256 onEdge = _mm256_or_ps(_mm256_or_ps(pointOnLine(v1, v2, p), pointOnLine(v2, v3, p)), pointOnLine(v3, v1, p));
-
-                        for (int j = 0; j < ctr; j++)
-                        {
-                            int px = (int)p.x[j];
-                            int py = (int)p.y[j];
-
-                            if (inTriangle[j] && z[j] < _zBuffer[(py * _screenSize) + px])
-                            {
-                                _zBuffer[(py * _screenSize) + px] = z[j];
-
-                                if (onEdge[j])
-                                    DrawPixel(px, _screenSize - py - 1, RED);
-                                else
-                                    DrawPixel(px, _screenSize - py - 1, GRAY);
-                            }
-                        }
-
-                        ctr = 0;
-                    }
+                    tileList.last->trivialAccept1 = pinedaEdge(v1, v2, p + trivialAccept1) * wSign;
+                    tileList.last->trivialAccept2 = pinedaEdge(v2, v3, p + trivialAccept2) * wSign;
+                    tileList.last->trivialAccept3 = pinedaEdge(v3, v1, p + trivialAccept3) * wSign;
                 }
             }
         }
 
+        // Operate on partitions of the initial tiles (descent)
+        for (int i = 0; i < nTiles; i++)
+        {
+            int& binSize = _tileBins[i].size;
+            RenderTileNode* tile = _tileBins[i].root;
+
+            while (tile != nullptr)
+            {
+                if (tile->isTriviallyAccepted())
+                {
+                    // Rasterize the entire triangle
+                }
+                else
+                {
+
+                }
+
+                tile = tile->next;
+            }
+        }
+
         snprintf(FPS, 16, "FPS: %d", GetFPS());
-        DrawText(FPS, _screenSize - 100, 10, 15, BLUE);
+        DrawText(FPS, _screenWidth - 100, 10, 15, BLUE);
 
         EndDrawing();
+
+        for (int i = 0; i < nPoly; i++)
+        {
+            _tileBins[i].clear();
+        }
     }
 
+    for (int i = 0; i < _screenHeight; i++)
+    {
+        delete[] _zBuffer[i];
+    }
     delete[] _zBuffer;
-    //delete[] frameBuffer;
+
     delete[] _proj;
     delete[] _invZ;
 

@@ -1,7 +1,11 @@
 #pragma once
 
 #include "linearMath.hpp"
+#include "renderTile.hpp"
 #include "SIMD.hpp"
+
+#define TILE_WIDTH 32
+#define TILE_HEIGHT 16
 
 class Rasterizer
 {
@@ -10,17 +14,24 @@ public:
 
 private:
     constexpr static float _cubeSize = 850;
-    constexpr static int _screenSize = 900;
-    constexpr static float _nearZ = (float)_screenSize / 2;
+    constexpr static int _screenHeight = 560;
+    constexpr static int _screenWidth = _screenHeight * 2;
+    constexpr static float _nearZ = (float)_screenWidth / 2;
 
-    static simd::Vec2f_m256* _proj;
+    static const simd::float_m256 tileEdgeFunctionIncr;
+
+    static Vec2f* _proj;
     static float* _invZ;
-    static float* _zBuffer;
+    static float** _zBuffer;
+    static RenderTileList* _tileBins;
 
     template <typename TVec>
     static TVec pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p);
 
-    static __m256 pointOnLine(const simd::Vec2f_m256& v1, const simd::Vec2f_m256& v2, const simd::Vec2f_m256& p);
+    static void perspectiveProject(const int& i, const simd::Vec3f_m256& p, const simd::Matrix44f_m256& worldToCamera, 
+        const float& canvasSizeX, const float& canvasSizeY);
 
-    static Vec2f getSerialVec2(int idx);
+    static Vec2f getTrivialRejectOffset(const Vec2f& v1, const Vec2f& v2, int tileWidth, int tileHeight);
+
+    static Vec2f getTrivialAcceptOffset(const Vec2f& trivialReject, int tileWidth, int tileHeight);
 };

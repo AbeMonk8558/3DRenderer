@@ -54,6 +54,11 @@ public:
         return Vec2<T>(x / scalar, y / scalar);
     }
 
+    Vec2<T> operator - () const
+    {
+        return Vec2<T>(-x, -y);
+    }
+
     T length() const
     {
         return sqrt(x * x + y * y);
@@ -80,6 +85,15 @@ public:
     {
         // Effectively the same as taking the determinant of a 2x2 matrix
         return x * right.y - y * right.x;
+    }
+
+    Vec2<T> surfaceNorm() const
+    {
+        Vec2<T> n(-y, x);
+        if (this->cross(n) < 0)
+            return -n;
+            
+        return n;
     }
 };
 
