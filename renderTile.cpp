@@ -14,7 +14,7 @@ RenderTileNode::~RenderTileNode()
 
 bool RenderTileNode::isTriviallyAccepted() const
 {
-    return trivialAccept1 >= 0 && trivialAccept2 >= 0 && trivialAccept3 >= 0;
+    return a1 >= 0 && a2 >= 0 && a3 >= 0;
 }
 
 // ********************************************************************
@@ -47,4 +47,16 @@ void RenderTileList::extend()
 }
 
 // ********************************************************************
+
+// *********************** RenderTriangle *****************************
+
+Vec2f RenderTriangle::_dummy;
+
+RenderTriangle::RenderTriangle() : v1(_dummy), v2(_dummy), v3(_dummy) {}
+
+RenderTriangle::RenderTriangle(Vec2f& _v1, Vec2f& _v2, Vec2f& _v3) : v1(_v1), v2(_v2), v3(_v3) {}
+
+// ********************************************************************
+
+
 

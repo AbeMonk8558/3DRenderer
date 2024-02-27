@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <array>
-#include "linearMath.hpp"
+#include "math.hpp"
 
 void printMatrix44f(const Matrix44f& m)
 {

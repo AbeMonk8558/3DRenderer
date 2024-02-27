@@ -1,6 +1,6 @@
 #pragma once
 
-#include "linearMath.hpp"
+#include "math.hpp"
 #include "renderTile.hpp"
 #include "SIMD.hpp"
 
@@ -18,12 +18,15 @@ private:
     constexpr static int _screenWidth = _screenHeight * 2;
     constexpr static float _nearZ = (float)_screenWidth / 2;
 
-    static const simd::float_m256 tileEdgeFunctionIncr;
+    static simd::float_m256 increments[4];
 
     static Vec2f* _proj;
     static float* _invZ;
     static float** _zBuffer;
     static RenderTileList* _tileBins;
+    static RenderTriangle* _triangles;
+
+    static simd::float_m256 getEdgeFunctionIncrements(const Vec2f& v1, const Vec2f& v2, float initial, const Vec2f& off);
 
     template <typename TVec>
     static TVec pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p);

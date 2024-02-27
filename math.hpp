@@ -337,3 +337,5 @@ private:
         {T(0), T(0), T(0), T(0)}
     };
 };
+
+float signf(float f);

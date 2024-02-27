@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <immintrin.h>
 #include "SIMD.hpp"
-#include "linearMath.hpp"
+#include "math.hpp"
 
 namespace simd
 {

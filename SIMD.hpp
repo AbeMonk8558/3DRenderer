@@ -1,7 +1,7 @@
 #pragma once
 
 #include <initializer_list>
-#include "linearMath.hpp"
+#include "math.hpp"
 
 namespace simd
 {

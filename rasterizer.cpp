@@ -3,7 +3,7 @@
 #include <raylib.h>
 #include "rasterizer.hpp"
 #include "SIMD.hpp"
-#include "linearMath.hpp"
+#include "math.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -14,8 +14,13 @@ Vec2f* Rasterizer::_proj = nullptr;
 float* Rasterizer::_invZ = nullptr;
 float** Rasterizer::_zBuffer = nullptr;
 RenderTileList* Rasterizer::_tileBins = nullptr;
+RenderTriangle* Rasterizer::_triangles = nullptr;
 
-const simd::float_m256 Rasterizer::tileEdgeFunctionIncr({1});
+
+simd::float_m256 Rasterizer::getEdgeFunctionIncrements(const Vec2f& v1, const Vec2f& v2, float initial, const Vec2f& off)
+{
+    return simd::float_m256 { 4, 5 };
+}
 
 template <typename TVec>
 TVec Rasterizer::pinedaEdge(const Vec2<TVec>& v1, const Vec2<TVec>& v2, const Vec2<TVec>& p)
@@ -64,14 +69,40 @@ Vec2f Rasterizer::getTrivialRejectOffset(const Vec2f& v1, const Vec2f& v2, int t
     return Vec2f(n.x < 0 ? 0 : tileWidth, n.y < 0 ? 0 : tileHeight);
 }
 
-Vec2f Rasterizer::getTrivialAcceptOffset(const Vec2f& trivialReject, int tileWidth, int tileHeight)
+Vec2f Rasterizer::getTrivialAcceptOffset(const Vec2f& r, int tileWidth, int tileHeight)
 {
-    return Vec2f(((int)trivialReject.x + tileWidth) % (2 * tileWidth), 
-        ((int)trivialReject.y + tileHeight) % (2 * tileHeight));
+    // r is trivial reject value for the tile
+    return Vec2f(((int)r.x + tileWidth) % (2 * tileWidth), 
+        ((int)r.y + tileHeight) % (2 * tileHeight));
 }
 
 void Rasterizer::start()
 {
+    // char FPS_t[16];
+    // SetTargetFPS(60);
+    // InitWindow(_screenWidth, _screenHeight, "Test");
+
+    // while (!WindowShouldClose())
+    // {
+    //     BeginDrawing();
+    //     ClearBackground(BLACK);
+
+    //     for (int y = 0; y < _screenHeight; y++)
+    //     {
+    //         for (int x = 0; x < _screenWidth; x++)
+    //         {
+    //             DrawPixel(x, _screenHeight - y - 1, BLUE);
+    //         }
+    //     }
+
+    //     snprintf(FPS_t, 16, "FPS: %d", GetFPS());
+    //     DrawText(FPS_t, _screenWidth - 100, 10, 15, BLACK);
+
+    //     EndDrawing();
+    // }
+
+    // return;
+
     std::ofstream logger("C:\\Users\\alexa\\Documents\\3DRenderer\\Tests\\3DRendererTemp.txt");
 
     float FOV = 90;
@@ -104,6 +135,15 @@ void Rasterizer::start()
     _proj = new Vec2f[nVerts + 8 - nRemVerts];
     _invZ = new float[nVerts + 8 - nRemVerts];
     _tileBins = new RenderTileList[nTiles];
+
+    // Set triangles to point to projected vertices
+    _triangles = new RenderTriangle[nPoly];
+    for (int i = 0; i < nPoly; i++)
+    {
+        _triangles[i].v1 = _proj[polyIdxs[i][0]];
+        _triangles[i].v2 = _proj[polyIdxs[i][1]];
+        _triangles[i].v3 = _proj[polyIdxs[i][2]];
+    }
 
     simd::Matrix44f_m256 cameraToWorld = simd::Matrix44f_m256::identity();
 
@@ -193,27 +233,26 @@ void Rasterizer::start()
                 _zBuffer[y][x] = INFINITY;
             }
         }
-        
-        BeginDrawing();
-        ClearBackground(BLACK);
 
         // Sort triangles into tile-based bins
         for (int i = 0; i < nPoly; i++)
         {
-            const Vec2f& v1 = _proj[polyIdxs[i][0]];
-            const Vec2f& v2 = _proj[polyIdxs[i][1]];
-            const Vec2f& v3 = _proj[polyIdxs[i][2]];
+            RenderTriangle& poly = _triangles[i];
 
-            float wSign = pinedaEdge(v1, v2, v3) >= 0 ? 1 : -1;
+            // Projected triangles may be defined clockwise, reversing sign of edge function calculations
+            poly.wSign = signf(pinedaEdge(poly.v1, poly.v2, poly.v3));
 
-            Vec2f trivialReject1 = getTrivialRejectOffset(v1, v2, TILE_WIDTH, TILE_HEIGHT);
-            Vec2f trivialAccept1 = getTrivialAcceptOffset(trivialReject1, TILE_WIDTH, TILE_HEIGHT);
+            // Trivial reject and accept offsets from bttm-left corner of tile
+            poly.rOff1 = getTrivialRejectOffset(poly.v1, poly.v2, TILE_WIDTH, TILE_HEIGHT);
+            poly.aOff1 = getTrivialAcceptOffset(poly.rOff1, TILE_WIDTH, TILE_HEIGHT);
 
-            Vec2f trivialReject2 = getTrivialRejectOffset(v2, v3, TILE_WIDTH, TILE_HEIGHT);
-            Vec2f trivialAccept2 = getTrivialAcceptOffset(trivialReject2, TILE_WIDTH, TILE_HEIGHT);
+            poly.rOff2 = getTrivialRejectOffset(poly.v2, poly.v3, TILE_WIDTH, TILE_HEIGHT);
+            poly.aOff2 = getTrivialAcceptOffset(poly.rOff2, TILE_WIDTH, TILE_HEIGHT);
 
-            Vec2f trivialReject3 = getTrivialRejectOffset(v3, v1, TILE_WIDTH, TILE_HEIGHT);
-            Vec2f trivialAccept3 = getTrivialAcceptOffset(trivialReject3, TILE_WIDTH, TILE_HEIGHT);
+            poly.rOff3 = getTrivialRejectOffset(poly.v3, poly.v1, TILE_WIDTH, TILE_HEIGHT);
+            poly.aOff3 = getTrivialAcceptOffset(poly.rOff3, TILE_WIDTH, TILE_HEIGHT);
+
+
 
             int tileCtr = 0;
             for (int y = 0; y < _screenHeight; y += TILE_HEIGHT)
@@ -223,41 +262,56 @@ void Rasterizer::start()
                     Vec2f p(x, y);
                     RenderTileList& tileList = _tileBins[tileCtr++];
 
-                    float r1 = pinedaEdge(v1, v2, p + trivialReject1) * wSign;
-                    float r2 = pinedaEdge(v2, v3, p + trivialReject2) * wSign;
-                    float r3 = pinedaEdge(v3, v1, p + trivialReject3) * wSign;
+                    float r1 = pinedaEdge(poly.v1, poly.v2, p + poly.rOff1) * poly.wSign;
+                    float r2 = pinedaEdge(poly.v2, poly.v3, p + poly.rOff2) * poly.wSign;
+                    float r3 = pinedaEdge(poly.v3, poly.v1, p + poly.rOff3) * poly.wSign;
 
-                    if (r1 * wSign < 0 || r2 * wSign < 0 || r3 * wSign < 0)
+                    if (r1 < 0 || r2 < 0 || r3 < 0)
                         continue;
 
-                    tileList.extend();
+                    _tileBins[tileCtr].extend();
+                    RenderTileNode& tile = *(_tileBins[tileCtr++].last);
 
-                    tileList.last->polyIdx = i;
-                    tileList.last->x = x;
-                    tileList.last->y = y;
+                    tile.polyIdx = i;
+                    tile.x = x;
+                    tile.y = y;
 
-                    tileList.last->trivialAccept1 = pinedaEdge(v1, v2, p + trivialAccept1) * wSign;
-                    tileList.last->trivialAccept2 = pinedaEdge(v2, v3, p + trivialAccept2) * wSign;
-                    tileList.last->trivialAccept3 = pinedaEdge(v3, v1, p + trivialAccept3) * wSign;
+                    tile.a1 = pinedaEdge(poly.v1, poly.v2, p + poly.aOff1) * poly.wSign;
+                    tile.a2 = pinedaEdge(poly.v2, poly.v3, p + poly.aOff2) * poly.wSign;
+                    tile.a3 = pinedaEdge(poly.v3, poly.v1, p + poly.aOff3) * poly.wSign;
+
+                    tile.r1 = r1;
+                    tile.r2 = r2;
+                    tile.r3 = r3;
                 }
             }
         }
 
+        BeginDrawing();
+        ClearBackground(BLACK);
+
         // Operate on partitions of the initial tiles (descent)
         for (int i = 0; i < nTiles; i++)
         {
-            int& binSize = _tileBins[i].size;
+            int binSize = _tileBins[i].size;
             RenderTileNode* tile = _tileBins[i].root;
 
             while (tile != nullptr)
             {
                 if (tile->isTriviallyAccepted())
                 {
-                    // Rasterize the entire triangle
+                    // Entire tile is contained within triangle, rasterize the whole thing
+                    for (int y = 0; y < TILE_HEIGHT; y++)
+                    {
+                        for (int x = 0; x < TILE_WIDTH; x++)
+                        {
+                            DrawPixel(x, _screenHeight - y - 1, BLUE);
+                        }
+                    }
                 }
                 else
                 {
-
+                    const simd::float_m256& rIncr = increments[0];
                 }
 
                 tile = tile->next;
