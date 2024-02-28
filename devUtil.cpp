@@ -16,11 +16,6 @@ void printMatrix44f(const Matrix44f& m)
     }
 }
 
-void printVec3f(const Vec3f& v)
-{
-    std::cout << "(" << v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
-}
-
 // ******************* Code for storing prototype asteroid mesh in memory ******************
 constexpr int numVerts = 8;
 constexpr int numPoly = 12;

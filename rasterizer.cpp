@@ -9,13 +9,16 @@
 #include <iostream>
 #include "devUtil.hpp"
 
+std::vector<Vec2f> Rasterizer::_proj;
+std::vector<float> Rasterizer::_invZ;
+std::vector<std::array<float, Rasterizer::_screenWidth>> Rasterizer::_zBuffer;
+std::vector<RenderTileList> Rasterizer::_tileBins;
+std::vector<RenderTriangle> Rasterizer::_triangles;
 
-Vec2f* Rasterizer::_proj = nullptr;
-float* Rasterizer::_invZ = nullptr;
-float** Rasterizer::_zBuffer = nullptr;
-RenderTileList* Rasterizer::_tileBins = nullptr;
-RenderTriangle* Rasterizer::_triangles = nullptr;
-
+float Rasterizer::yToRaster(float y) noexcept
+{
+    return _screenHeight - y - 1;
+}
 
 simd::float_m256 Rasterizer::getEdgeFunctionIncrements(const Vec2f& v1, const Vec2f& v2, float initial, const Vec2f& off)
 {
@@ -57,6 +60,7 @@ void Rasterizer::perspectiveProject(const int& i, const simd::Vec3f_m256& p, con
     for (int j = 0; j < 8; j++)
     {
         _proj[i + j] = Vec2f(raster.x[j], raster.y[j]);
+        //printVec2f(_proj[i + j]);
     }
 }
 
@@ -78,30 +82,30 @@ Vec2f Rasterizer::getTrivialAcceptOffset(const Vec2f& r, int tileWidth, int tile
 
 void Rasterizer::start()
 {
-    // char FPS_t[16];
-    // SetTargetFPS(60);
-    // InitWindow(_screenWidth, _screenHeight, "Test");
+    char FPS_t[16];
+    SetTargetFPS(60);
+    InitWindow(_screenWidth, _screenHeight, "Test");
 
-    // while (!WindowShouldClose())
-    // {
-    //     BeginDrawing();
-    //     ClearBackground(BLACK);
+    while (!WindowShouldClose())
+    {
+        BeginDrawing();
+        ClearBackground(BLACK);
 
-    //     for (int y = 0; y < _screenHeight; y++)
-    //     {
-    //         for (int x = 0; x < _screenWidth; x++)
-    //         {
-    //             DrawPixel(x, _screenHeight - y - 1, BLUE);
-    //         }
-    //     }
+        for (int y = 0; y < _screenHeight; y += 16)
+        {
+            for (int x = 0; x < _screenWidth; x += 32)
+            {
+                DrawRectangle(x, yToRaster(y + _tileHeight), _tileWidth, _tileHeight, GRAY);
+            }
+        }
 
-    //     snprintf(FPS_t, 16, "FPS: %d", GetFPS());
-    //     DrawText(FPS_t, _screenWidth - 100, 10, 15, BLACK);
+        snprintf(FPS_t, 16, "FPS: %d", GetFPS());
+        DrawText(FPS_t, _screenWidth - 100, 10, 15, RED);
 
-    //     EndDrawing();
-    // }
+        EndDrawing();
+    }
 
-    // return;
+    return;
 
     std::ofstream logger("C:\\Users\\alexa\\Documents\\3DRenderer\\Tests\\3DRendererTemp.txt");
 
@@ -117,36 +121,29 @@ void Rasterizer::start()
     retrievePrototypeMeshData(verts, polyIdxs, _cubeSize);
     for (Vec3f& v : verts)
         v.z -= _nearZ + _cubeSize / 2; // Makes them more easily visible
-
-    // IMPORTANT: Overflows stack if not heap allocated
-    _zBuffer = new float*[_screenHeight];
-    for (int i = 0; i < _screenHeight; i++)
-    {
-        _zBuffer[i] = new float[_screenWidth];
-    }
     
     const int nVerts = verts.size();
     const int nRemVerts = nVerts % 8;
     const int nPoly = polyIdxs.size();
-    const int nTiles = (_screenWidth / TILE_WIDTH) * (_screenHeight / TILE_HEIGHT);
+    const int nTiles = (_screenWidth / _tileWidth) * (_screenHeight / _tileHeight);
 
     // Since the number of vertices may not be divisible by 8 to evenly hold all 8-float AVX vectors, we
-    // allocate a small buffer space at the end.
-    _proj = new Vec2f[nVerts + 8 - nRemVerts];
-    _invZ = new float[nVerts + 8 - nRemVerts];
-    _tileBins = new RenderTileList[nTiles];
+    // allocate a small buffer space at the end for _invZ and _proj
+    _proj.resize(nVerts + 8 - nRemVerts);
+    _invZ.resize(nVerts + 8 - nRemVerts);
+    _tileBins.resize(nTiles);
+    _zBuffer.resize(_screenHeight);
 
     // Set triangles to point to projected vertices
-    _triangles = new RenderTriangle[nPoly];
+    _triangles.reserve(nPoly);
     for (int i = 0; i < nPoly; i++)
     {
-        _triangles[i].v1 = _proj[polyIdxs[i][0]];
-        _triangles[i].v2 = _proj[polyIdxs[i][1]];
-        _triangles[i].v3 = _proj[polyIdxs[i][2]];
+        _triangles.push_back(RenderTriangle(_proj[polyIdxs[i][0]], _proj[polyIdxs[i][1]], 
+            _proj[polyIdxs[i][2]]));
     }
 
     simd::Matrix44f_m256 cameraToWorld = simd::Matrix44f_m256::identity();
-
+    
     while (!WindowShouldClose())
     {
         float dCameraX = 0;
@@ -210,7 +207,7 @@ void Rasterizer::start()
         simd::Matrix44f_m256 worldToCamera = cameraToWorld.inverse();
 
         const float canvasSizeX = 2 * std::tan(FOV * DEG2RAD / 2) * _nearZ;
-        const float canvasSizeY = canvasSizeX * (_screenHeight / _screenWidth);
+        const float canvasSizeY = canvasSizeX * _screenHeight / _screenWidth;
 
         for (int i = 0; i < verts.size(); i += 8) 
         {
@@ -243,24 +240,21 @@ void Rasterizer::start()
             poly.wSign = signf(pinedaEdge(poly.v1, poly.v2, poly.v3));
 
             // Trivial reject and accept offsets from bttm-left corner of tile
-            poly.rOff1 = getTrivialRejectOffset(poly.v1, poly.v2, TILE_WIDTH, TILE_HEIGHT);
-            poly.aOff1 = getTrivialAcceptOffset(poly.rOff1, TILE_WIDTH, TILE_HEIGHT);
+            poly.rOff1 = getTrivialRejectOffset(poly.v1, poly.v2, _tileWidth, _tileHeight);
+            poly.aOff1 = getTrivialAcceptOffset(poly.rOff1, _tileWidth, _tileHeight);
 
-            poly.rOff2 = getTrivialRejectOffset(poly.v2, poly.v3, TILE_WIDTH, TILE_HEIGHT);
-            poly.aOff2 = getTrivialAcceptOffset(poly.rOff2, TILE_WIDTH, TILE_HEIGHT);
+            poly.rOff2 = getTrivialRejectOffset(poly.v2, poly.v3, _tileWidth, _tileHeight);
+            poly.aOff2 = getTrivialAcceptOffset(poly.rOff2, _tileWidth, _tileHeight);
 
-            poly.rOff3 = getTrivialRejectOffset(poly.v3, poly.v1, TILE_WIDTH, TILE_HEIGHT);
-            poly.aOff3 = getTrivialAcceptOffset(poly.rOff3, TILE_WIDTH, TILE_HEIGHT);
-
-
+            poly.rOff3 = getTrivialRejectOffset(poly.v3, poly.v1, _tileWidth, _tileHeight);
+            poly.aOff3 = getTrivialAcceptOffset(poly.rOff3, _tileWidth, _tileHeight);
 
             int tileCtr = 0;
-            for (int y = 0; y < _screenHeight; y += TILE_HEIGHT)
+            for (int y = 0; y < _screenHeight; y += _tileHeight)
             {
-                for (int x = 0; x < _screenWidth; x += TILE_WIDTH)
+                for (int x = 0; x < _screenWidth; x += _tileWidth)
                 {
                     Vec2f p(x, y);
-                    RenderTileList& tileList = _tileBins[tileCtr++];
 
                     float r1 = pinedaEdge(poly.v1, poly.v2, p + poly.rOff1) * poly.wSign;
                     float r2 = pinedaEdge(poly.v2, poly.v3, p + poly.rOff2) * poly.wSign;
@@ -273,16 +267,14 @@ void Rasterizer::start()
                     RenderTileNode& tile = *(_tileBins[tileCtr++].last);
 
                     tile.polyIdx = i;
-                    tile.x = x;
-                    tile.y = y;
+                    tile.x = x; tile.y = y;
 
                     tile.a1 = pinedaEdge(poly.v1, poly.v2, p + poly.aOff1) * poly.wSign;
                     tile.a2 = pinedaEdge(poly.v2, poly.v3, p + poly.aOff2) * poly.wSign;
                     tile.a3 = pinedaEdge(poly.v3, poly.v1, p + poly.aOff3) * poly.wSign;
+                    //printVec2f(poly.v1);
 
-                    tile.r1 = r1;
-                    tile.r2 = r2;
-                    tile.r3 = r3;
+                    tile.r1 = r1; tile.r2 = r2; tile.r3 = r3;
                 }
             }
         }
@@ -301,13 +293,7 @@ void Rasterizer::start()
                 if (tile->isTriviallyAccepted())
                 {
                     // Entire tile is contained within triangle, rasterize the whole thing
-                    for (int y = 0; y < TILE_HEIGHT; y++)
-                    {
-                        for (int x = 0; x < TILE_WIDTH; x++)
-                        {
-                            DrawPixel(x, _screenHeight - y - 1, BLUE);
-                        }
-                    }
+                    DrawRectangle(tile->x, yToRaster(tile->y + _tileHeight), _tileWidth, _tileHeight, GRAY);
                 }
                 else
                 {
@@ -328,15 +314,6 @@ void Rasterizer::start()
             _tileBins[i].clear();
         }
     }
-
-    for (int i = 0; i < _screenHeight; i++)
-    {
-        delete[] _zBuffer[i];
-    }
-    delete[] _zBuffer;
-
-    delete[] _proj;
-    delete[] _invZ;
 
     logger.close();
 }

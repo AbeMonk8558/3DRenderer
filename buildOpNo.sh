@@ -1,0 +1,1 @@
+g++ -mavx -O3 *.cpp -lraylib

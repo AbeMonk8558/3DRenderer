@@ -45,9 +45,9 @@ public:
 class RenderTriangle
 {
 public:
-    Vec2f& v1;
-    Vec2f& v2;
-    Vec2f& v3;
+    const Vec2f& v1;
+    const Vec2f& v2;
+    const Vec2f& v3;
     float wSign = 1;
 
     Vec2f rOff1; // Trivial reject offset
@@ -57,13 +57,9 @@ public:
     Vec2f rOff3;
     Vec2f aOff3;
 
-    simd::float_m256 e1;
+    simd::float_m256 e1; // Edge function increments for edge
     simd::float_m256 e2;
     simd::float_m256 e3;
 
-    RenderTriangle();
-    RenderTriangle(Vec2f& _v1, Vec2f& _v2, Vec2f& _v3);
-
-private:
-    static Vec2f _dummy;
+    RenderTriangle(const Vec2f& _v1, const Vec2f& _v2, const Vec2f& _v3);
 };
